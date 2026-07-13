@@ -7,6 +7,7 @@
 - Keep an awaited retry timer referenced so a short-lived process does not exit
   before its caller's awaited send settles.
 - Add `npm run verify` for the local release gate.
+- Upgrade the Vitest development toolchain to a version with no known advisories.
 
 ## 0.1.4
 
