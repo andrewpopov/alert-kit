@@ -1,6 +1,6 @@
 {
   "name": "@andrewpopov/alert-kit",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Transport-pluggable alert primitive with a built-in Discord transport: rich embeds, per-severity webhook routing, bounded timeout, 429 retry, graceful-degradation send, and a test seam.",
   "author": "Andrew Popov",
   "license": "MIT",
@@ -24,7 +24,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:pack": "node scripts/verify-pack.mjs"
+    "verify:pack": "node scripts/verify-pack.mjs",
+    "verify": "npm run typecheck && npm test && npm run build && npm run verify:pack"
   },
   "dependencies": {},
   "devDependencies": {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- Add `totalTimeoutMs` to bound one delivery across its first attempt, 429
+  wait, and retry. A retry that cannot fit within the deadline is not sent.
+- Keep an awaited retry timer referenced so a short-lived process does not exit
+  before its caller's awaited send settles.
+- Add `npm run verify` for the local release gate.
+
 ## 0.1.4
 
 Fix (security) — **the webhook URL could leak into a consumer's logs.** A raw fetch
