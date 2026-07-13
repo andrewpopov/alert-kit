@@ -12,6 +12,8 @@ export interface DiscordTransportOptions {
     username?: string;
     /** Per-request timeout. Default 10_000ms. Always bounded — an unbounded alert POST can hang a request/deploy forever. */
     timeoutMs?: number;
+    /** Optional total deadline covering the initial POST, 429 wait, and retry. */
+    totalTimeoutMs?: number;
     /** Override the default per-severity embed colors. */
     colors?: Partial<Record<Severity, number>>;
     /** Retry once on HTTP 429, honoring `retry_after`. Default true. */
