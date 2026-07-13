@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.4
+
+Fix (security) — **the webhook URL could leak into a consumer's logs.** A raw fetch
+error was rethrown unchanged, and fetch embeds the URL in some of them: a
+scheme-less webhook URL yields `TypeError: Failed to parse URL from
+discord.com/api/webhooks/<id>/<TOKEN>`. The webhook URL is a BEARER CREDENTIAL,
+and callers routinely log `error.message` — bewks does — so the token landed in
+application logs.
+
+No raw error escapes the transport now: the URL is redacted from every error
+before it is thrown. smarthome and savoro both hand-rolled guards against exactly
+this, so the kit was not a superset of the code it replaces. The path had zero
+test coverage; it does now.
+
 ## 0.1.3
 
 Fix — expose `./package.json` in the `exports` map. Without it,
