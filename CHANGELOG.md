@@ -2,6 +2,7 @@
 
 ## 0.1.5
 
+- Add public contribution, support, and private vulnerability-reporting policies.
 - Add `totalTimeoutMs` to bound one delivery across its first attempt, 429
   wait, and retry. A retry that cannot fit within the deadline is not sent.
 - Keep an awaited retry timer referenced so a short-lived process does not exit
