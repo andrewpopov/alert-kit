@@ -511,3 +511,44 @@ describe('createAlerter convenience methods', () => {
     expect(body.embeds[0].fields).toEqual([{ name: 'code', value: '500', inline: true }]);
   });
 });
+
+// The webhook URL is a BEARER CREDENTIAL. fetch embeds it in some errors — a
+// scheme-less URL yields `TypeError: Failed to parse URL from
+// discord.com/api/webhooks/<id>/<TOKEN>`. Callers routinely log `error.message`
+// (bewks does), so a raw rethrow puts the token straight into application logs.
+// smarthome and savoro both hand-rolled guards against exactly this; the kit did
+// not, which made it NOT a superset of the code it replaces. This path had zero
+// test coverage, which is why the leak shipped.
+describe('the webhook URL is never leaked in an error', () => {
+  const TOKEN = 'SUPER_SECRET_TOKEN';
+
+  it('redacts the webhook URL from a malformed-URL fetch error', async () => {
+    const transport = createDiscordTransport({
+      webhookUrl: `discord.com/api/webhooks/123/${TOKEN}`, // no scheme -> fetch throws with the URL in the message
+    });
+    await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(
+      /<redacted-webhook-url>/,
+    );
+    await expect(transport.send({ severity: 'info', title: 't' })).rejects.not.toThrow(
+      new RegExp(TOKEN),
+    );
+  });
+
+  it('redacts the webhook URL from an arbitrary transport error', async () => {
+    const impl = (() => {
+      throw new Error(`connect failed to https://discord.com/api/webhooks/9/${TOKEN}`);
+    }) as unknown as typeof fetch;
+    const transport = createDiscordTransport({
+      webhookUrl: `https://discord.com/api/webhooks/9/${TOKEN}`,
+      fetchImpl: impl,
+    });
+    const err = await transport.send({ severity: 'info', title: 't' }).catch((e: Error) => e);
+    expect((err as Error).message).not.toContain(TOKEN);
+    expect((err as Error).message).toContain('<redacted-webhook-url>');
+  });
+
+  it('still says WHAT failed after redaction', async () => {
+    const transport = createDiscordTransport({ webhookUrl: `discord.com/api/webhooks/1/${TOKEN}` });
+    await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(/failed/i);
+  });
+});

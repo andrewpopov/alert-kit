@@ -247,6 +247,29 @@ function resolveConfig(options: DiscordTransportOptions): {
 }
 
 /** True for a native `AbortError` (fetch/body-read rejection from an aborted `AbortSignal`). */
+/** `err.message` if it is an Error, else a safe stringification. Never throws. */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  try {
+    return String(err);
+  } catch {
+    return 'unknown error';
+  }
+}
+
+/**
+ * Strip the webhook URL (a bearer credential) out of any text before it can be
+ * logged. Redacts the exact URL we were given, plus anything webhook-shaped, so
+ * a mangled or partially-quoted variant can't slip through.
+ */
+export function redactWebhookUrl(text: string, url?: string): string {
+  let out = text;
+  if (url && url.length > 0) out = out.split(url).join('<redacted-webhook-url>');
+  out = out.replace(/https?:\/\/\S*?\/webhooks\/\S+/gi, '<redacted-webhook-url>');
+  out = out.replace(/\bdiscord(?:app)?\.com\/api\/webhooks\/\S+/gi, '<redacted-webhook-url>');
+  return out;
+}
+
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
@@ -325,7 +348,12 @@ async function attempt(
     if (controller.signal.aborted || isAbortError(err)) {
       throw new Error(`Discord webhook POST timed out after ${timeoutMs}ms`);
     }
-    throw err;
+    // NEVER rethrow a raw fetch error. The webhook URL is a bearer credential,
+    // and fetch embeds it in some errors — a scheme-less URL yields
+    // `TypeError: Failed to parse URL from discord.com/api/webhooks/<id>/<TOKEN>`.
+    // Callers routinely log `error.message`, so a raw rethrow puts the token in
+    // application logs. Redact before it ever leaves this function.
+    throw new Error(`Discord webhook POST failed: ${redactWebhookUrl(describeError(err), url)}`);
   } finally {
     clearTimeout(timer);
   }

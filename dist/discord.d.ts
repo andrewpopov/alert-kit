@@ -35,5 +35,11 @@ export interface DiscordTransportOptions {
         title: string;
     }) => void;
 }
+/**
+ * Strip the webhook URL (a bearer credential) out of any text before it can be
+ * logged. Redacts the exact URL we were given, plus anything webhook-shaped, so
+ * a mangled or partially-quoted variant can't slip through.
+ */
+export declare function redactWebhookUrl(text: string, url?: string): string;
 /** Create a Discord transport bound to the given options. Config is read lazily. */
 export declare function createDiscordTransport(options?: DiscordTransportOptions): AlertTransport;
