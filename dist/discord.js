@@ -305,6 +305,9 @@ function createDiscordTransport(options = {}) {
                 options.onSkipped?.({ severity: alert.severity, title: alert.title });
                 throw new Error(`No Discord webhook route configured for severity "${alert.severity}"`);
             }
+            if (options.validateUrl) {
+                await options.validateUrl(route);
+            }
             const config = resolveConfig(options);
             const retryOn429 = options.retryOn429 ?? true;
             const fetchImpl = options.fetchImpl ?? globalThis.fetch;

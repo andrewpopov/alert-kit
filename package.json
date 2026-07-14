@@ -1,6 +1,6 @@
 {
   "name": "@andrewpopov/alert-kit",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Transport-pluggable alert primitive with a built-in Discord transport: rich embeds, per-severity webhook routing, bounded timeout, 429 retry, graceful-degradation send, and a test seam.",
   "author": "Andrew Popov",
   "license": "MIT",
