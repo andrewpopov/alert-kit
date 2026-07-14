@@ -204,6 +204,17 @@ export interface DiscordTransportOptions {
   onSent?: (info: { severity: Severity; title: string; webhookId: string | undefined }) => void;
   /** Called when an alert's severity has no configured route (transport still throws). */
   onSkipped?: (info: { severity: Severity; title: string }) => void;
+  /**
+   * Optional guard rail run against the resolved destination URL immediately
+   * before every POST. Every consumer today passes a trusted env-sourced
+   * URL, so this is unused by default — no validation unless a consumer
+   * opts in. It exists so a FUTURE consumer that accepts a user-supplied
+   * webhook URL has somewhere to plug in an SSRF check (e.g.
+   * `@andrewpopov/url-guard`'s `assertSafeUrl`) without alert-kit growing
+   * its own SSRF stack. Throw (or reject) to block the send; the rejection
+   * propagates out of `send()` unchanged.
+   */
+  validateUrl?: (url: string) => void | Promise<void>;
 }
 
 function resolveRoutes(options: DiscordTransportOptions): {
@@ -378,6 +389,10 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
       if (!route) {
         options.onSkipped?.({ severity: alert.severity, title: alert.title });
         throw new Error(`No Discord webhook route configured for severity "${alert.severity}"`);
+      }
+
+      if (options.validateUrl) {
+        await options.validateUrl(route);
       }
 
       const config = resolveConfig(options);

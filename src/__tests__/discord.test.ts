@@ -490,6 +490,69 @@ describe('createDiscordTransport', () => {
     });
   });
 
+  describe('destination-URL guard rail (validateUrl)', () => {
+    it('is not called when validateUrl is omitted (default behavior unchanged)', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl });
+      await transport.send({ severity: 'info', title: 't' });
+      expect(calls).toHaveLength(1);
+    });
+
+    it('is called with the resolved destination URL before the POST', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const validateUrl = vi.fn();
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, validateUrl });
+      await transport.send({ severity: 'info', title: 't' });
+      expect(validateUrl).toHaveBeenCalledWith(PRIMARY);
+      expect(validateUrl).toHaveBeenCalledTimes(1);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('is called with the per-severity route, not the primary, when a severity route is used', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const validateUrl = vi.fn();
+      const transport = createDiscordTransport({
+        webhookUrl: PRIMARY,
+        severityWebhookUrls: { critical: CRITICAL },
+        fetchImpl: impl,
+        validateUrl,
+      });
+      await transport.send({ severity: 'critical', title: 't' });
+      expect(validateUrl).toHaveBeenCalledWith(CRITICAL);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('a synchronous throw blocks the POST and rejects send()', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const validateUrl = vi.fn(() => {
+        throw new Error('destination not allowed');
+      });
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, validateUrl });
+      await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(
+        'destination not allowed',
+      );
+      expect(calls).toHaveLength(0);
+    });
+
+    it('an async rejection blocks the POST and rejects send()', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const validateUrl = vi.fn(async () => {
+        throw new Error('SSRF blocked');
+      });
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, validateUrl });
+      await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow('SSRF blocked');
+      expect(calls).toHaveLength(0);
+    });
+
+    it('a resolving validator lets the POST proceed', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const validateUrl = vi.fn(async () => {});
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, validateUrl });
+      await expect(transport.send({ severity: 'info', title: 't' })).resolves.toBeUndefined();
+      expect(calls).toHaveLength(1);
+    });
+  });
+
   describe('lazy config resolution', () => {
     it('reads service/username/timeoutMs/colors from env at send time, not at transport-creation time', async () => {
       const { impl, calls } = fakeFetch([jsonResponse(200, {})]);

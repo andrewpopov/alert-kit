@@ -33,10 +33,29 @@ with a trailing `…`. Every request is bounded by `timeoutMs` (default 10s). A
 Set `totalTimeoutMs` to bound the initial POST, retry wait, and retry as one
 delivery deadline; a retry that cannot fit fails without issuing a second POST.
 
+### Destination-URL guard rail
+
+Every consumer today passes a trusted, env-sourced webhook URL, so there's no
+built-in SSRF check — nothing stops a *future* consumer from passing a
+user-supplied URL instead. Pass `validateUrl(url)` to opt in: it runs against
+the resolved destination URL immediately before every POST, and a thrown (or
+rejected) error blocks the send. Default behavior is unchanged when omitted.
+This is a guard rail, not a full SSRF stack — compose it with something like
+`@andrewpopov/url-guard`'s `assertSafeUrl`:
+
+```ts
+import { assertSafeUrl } from '@andrewpopov/url-guard';
+
+const transport = createDiscordTransport({
+  webhookUrl: userSuppliedUrl,
+  validateUrl: (url) => assertSafeUrl(url),
+});
+```
+
 ## Install
 
 ```
-npm install github:andrewpopov/alert-kit#v0.1.4
+npm install github:andrewpopov/alert-kit#v0.2.0
 ```
 
 ## Use
@@ -76,7 +95,7 @@ await alerter.alert({ severity: 'critical', title: 'DB connection pool exhausted
 `Alert`: `{ severity, title, message?, fields?, service?, timestamp? }`.
 `DiscordTransportOptions`: `env`, `webhookUrl`, `severityWebhookUrls`,
 `service`, `username`, `timeoutMs`, `colors`, `retryOn429`, `fetchImpl`,
-`totalTimeoutMs`, `onSent`, `onSkipped`.
+`totalTimeoutMs`, `onSent`, `onSkipped`, `validateUrl`.
 
 ## Verify locally
 

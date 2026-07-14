@@ -36,6 +36,17 @@ export interface DiscordTransportOptions {
         severity: Severity;
         title: string;
     }) => void;
+    /**
+     * Optional guard rail run against the resolved destination URL immediately
+     * before every POST. Every consumer today passes a trusted env-sourced
+     * URL, so this is unused by default — no validation unless a consumer
+     * opts in. It exists so a FUTURE consumer that accepts a user-supplied
+     * webhook URL has somewhere to plug in an SSRF check (e.g.
+     * `@andrewpopov/url-guard`'s `assertSafeUrl`) without alert-kit growing
+     * its own SSRF stack. Throw (or reject) to block the send; the rejection
+     * propagates out of `send()` unchanged.
+     */
+    validateUrl?: (url: string) => void | Promise<void>;
 }
 /**
  * Strip the webhook URL (a bearer credential) out of any text before it can be
