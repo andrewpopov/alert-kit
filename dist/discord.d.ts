@@ -2,7 +2,13 @@ import type { AlertTransport, Severity } from './types';
 export interface DiscordTransportOptions {
     /** Config source. Defaults to `process.env`. Read lazily on every call. */
     env?: Record<string, string | undefined>;
-    /** Primary webhook URL, used when a severity has no dedicated route. Else `env.DISCORD_WEBHOOK_URL`. */
+    /**
+     * Primary webhook URL, used when a severity has no dedicated route. Else
+     * `env.DISCORD_WEBHOOK_URL`. If neither resolves for a given severity —
+     * no `severityWebhookUrls`/env override AND no primary — the fleet-wide
+     * default in `env.DISCORD_ALERT_WEBHOOK` is used as a last resort before
+     * giving up. See `resolveRoutes` below.
+     */
     webhookUrl?: string;
     /** Per-severity webhook URLs. Else `env.DISCORD_WEBHOOK_URL_INFO|_WARN|_ERROR|_CRITICAL`. */
     severityWebhookUrls?: Partial<Record<Severity, string>>;
