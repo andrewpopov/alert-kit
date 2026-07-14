@@ -165,12 +165,7 @@ function sanitizeColor(color: number | undefined, fallback: number): number {
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    // Don't let a pending retry delay keep the process alive (e.g. in a
-    // short-lived CLI or serverless invocation).
-    (t as { unref?: () => void }).unref?.();
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Parse the non-secret webhook id out of a Discord webhook URL's `.../webhooks/{id}/{token}` shape. */
@@ -192,6 +187,8 @@ export interface DiscordTransportOptions {
   username?: string;
   /** Per-request timeout. Default 10_000ms. Always bounded — an unbounded alert POST can hang a request/deploy forever. */
   timeoutMs?: number;
+  /** Optional total deadline covering the initial POST, 429 wait, and retry. */
+  totalTimeoutMs?: number;
   /** Override the default per-severity embed colors. */
   colors?: Partial<Record<Severity, number>>;
   /** Retry once on HTTP 429, honoring `retry_after`. Default true. */
@@ -230,6 +227,7 @@ function resolveConfig(options: DiscordTransportOptions): {
   service: string | undefined;
   username: string | undefined;
   timeoutMs: number;
+  totalTimeoutMs: number | undefined;
   colors: Record<Severity, number>;
 } {
   const env = options.env ?? process.env;
@@ -237,6 +235,7 @@ function resolveConfig(options: DiscordTransportOptions): {
     service: options.service?.trim() || env.DISCORD_ALERT_SERVICE?.trim() || undefined,
     username: options.username?.trim() || env.DISCORD_ALERT_USERNAME?.trim() || undefined,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    totalTimeoutMs: options.totalTimeoutMs,
     colors: {
       info: sanitizeColor(options.colors?.info, DEFAULT_COLORS.info),
       warn: sanitizeColor(options.colors?.warn, DEFAULT_COLORS.warn),
@@ -389,10 +388,25 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
         embeds: [buildEmbed({ ...alert, service: alert.service ?? config.service }, config.colors)],
       };
 
-      let result = await attempt(route, body, fetchImpl, config.timeoutMs);
+      const startedAt = Date.now();
+      const remainingMs = (): number => {
+        if (config.totalTimeoutMs === undefined) return config.timeoutMs;
+        return config.totalTimeoutMs - (Date.now() - startedAt);
+      };
+      const attemptTimeout = (): number => {
+        const remaining = remainingMs();
+        if (remaining <= 0) throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+        return Math.min(config.timeoutMs, remaining);
+      };
+
+      let result = await attempt(route, body, fetchImpl, attemptTimeout());
       if (result.kind === 'rateLimited' && retryOn429) {
-        await delay(result.retryAfterSec * 1000);
-        result = await attempt(route, body, fetchImpl, config.timeoutMs);
+        const delayMs = result.retryAfterSec * 1000;
+        if (config.totalTimeoutMs !== undefined && delayMs >= remainingMs()) {
+          throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+        }
+        await delay(delayMs);
+        result = await attempt(route, body, fetchImpl, attemptTimeout());
       }
 
       if (result.kind === 'rateLimited') {

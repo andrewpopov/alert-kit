@@ -183,6 +183,13 @@ describe('createDiscordTransport', () => {
       await expect(send).resolves.toBeUndefined();
       expect(calls).toHaveLength(2);
     });
+
+    it('fails before retrying when Retry-After would exceed the configured total deadline', async () => {
+      const { impl, calls } = fakeFetch([jsonResponse(429, { retry_after: 2 })]);
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, totalTimeoutMs: 1_000 });
+      await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(/total deadline exceeded after 1000ms/);
+      expect(calls).toHaveLength(1);
+    });
   });
 
   describe('non-2xx', () => {

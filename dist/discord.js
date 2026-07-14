@@ -143,12 +143,7 @@ function sanitizeColor(color, fallback) {
     return Number.isInteger(color) && color >= 0x000000 && color <= 0xffffff ? color : fallback;
 }
 function delay(ms) {
-    return new Promise((resolve) => {
-        const t = setTimeout(resolve, ms);
-        // Don't let a pending retry delay keep the process alive (e.g. in a
-        // short-lived CLI or serverless invocation).
-        t.unref?.();
-    });
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 /** Parse the non-secret webhook id out of a Discord webhook URL's `.../webhooks/{id}/{token}` shape. */
 function parseWebhookId(url) {
@@ -173,6 +168,7 @@ function resolveConfig(options) {
         service: options.service?.trim() || env.DISCORD_ALERT_SERVICE?.trim() || undefined,
         username: options.username?.trim() || env.DISCORD_ALERT_USERNAME?.trim() || undefined,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        totalTimeoutMs: options.totalTimeoutMs,
         colors: {
             info: sanitizeColor(options.colors?.info, DEFAULT_COLORS.info),
             warn: sanitizeColor(options.colors?.warn, DEFAULT_COLORS.warn),
@@ -316,10 +312,26 @@ function createDiscordTransport(options = {}) {
                 ...(config.username ? { username: config.username } : {}),
                 embeds: [buildEmbed({ ...alert, service: alert.service ?? config.service }, config.colors)],
             };
-            let result = await attempt(route, body, fetchImpl, config.timeoutMs);
+            const startedAt = Date.now();
+            const remainingMs = () => {
+                if (config.totalTimeoutMs === undefined)
+                    return config.timeoutMs;
+                return config.totalTimeoutMs - (Date.now() - startedAt);
+            };
+            const attemptTimeout = () => {
+                const remaining = remainingMs();
+                if (remaining <= 0)
+                    throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+                return Math.min(config.timeoutMs, remaining);
+            };
+            let result = await attempt(route, body, fetchImpl, attemptTimeout());
             if (result.kind === 'rateLimited' && retryOn429) {
-                await delay(result.retryAfterSec * 1000);
-                result = await attempt(route, body, fetchImpl, config.timeoutMs);
+                const delayMs = result.retryAfterSec * 1000;
+                if (config.totalTimeoutMs !== undefined && delayMs >= remainingMs()) {
+                    throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+                }
+                await delay(delayMs);
+                result = await attempt(route, body, fetchImpl, attemptTimeout());
             }
             if (result.kind === 'rateLimited') {
                 throw new Error('Discord webhook POST failed with status 429: rate limited');

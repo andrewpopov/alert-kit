@@ -30,11 +30,13 @@ alert or letting a request 400: title ≤ 256 chars, description ≤ 4096, field
 name ≤ 256, field value ≤ 1024, footer ≤ 2048, max 25 fields — each truncated
 with a trailing `…`. Every request is bounded by `timeoutMs` (default 10s). A
 `429` is retried once, honoring `retry_after`/`Retry-After` (capped at 60s).
+Set `totalTimeoutMs` to bound the initial POST, retry wait, and retry as one
+delivery deadline; a retry that cannot fit fails without issuing a second POST.
 
 ## Install
 
 ```
-npm install github:andrewpopov/alert-kit#v0.1.0
+npm install github:andrewpopov/alert-kit#v0.1.4
 ```
 
 ## Use
@@ -74,7 +76,15 @@ await alerter.alert({ severity: 'critical', title: 'DB connection pool exhausted
 `Alert`: `{ severity, title, message?, fields?, service?, timestamp? }`.
 `DiscordTransportOptions`: `env`, `webhookUrl`, `severityWebhookUrls`,
 `service`, `username`, `timeoutMs`, `colors`, `retryOn429`, `fetchImpl`,
-`onSent`, `onSkipped`.
+`totalTimeoutMs`, `onSent`, `onSkipped`.
+
+## Verify locally
+
+```bash
+npm ci
+npm run verify
+npm audit --omit=dev --audit-level=high
+```
 
 ### The transport seam
 
@@ -87,3 +97,8 @@ transport is plugged in. Inject a fake `AlertTransport` (or a fake
 ## Standards
 
 See [`STANDARDS.md`](./STANDARDS.md) (synced from `agent_brain/knowledge/shared-package-standards.md`).
+
+## Project policies
+
+See [Contributing](./CONTRIBUTING.md), [Support](./SUPPORT.md), and the
+[Security Policy](./SECURITY.md). This package is licensed under [MIT](./LICENSE).
