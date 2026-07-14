@@ -177,7 +177,13 @@ function parseWebhookId(url: string): string | undefined {
 export interface DiscordTransportOptions {
   /** Config source. Defaults to `process.env`. Read lazily on every call. */
   env?: Record<string, string | undefined>;
-  /** Primary webhook URL, used when a severity has no dedicated route. Else `env.DISCORD_WEBHOOK_URL`. */
+  /**
+   * Primary webhook URL, used when a severity has no dedicated route. Else
+   * `env.DISCORD_WEBHOOK_URL`. If neither resolves for a given severity —
+   * no `severityWebhookUrls`/env override AND no primary — the fleet-wide
+   * default in `env.DISCORD_ALERT_WEBHOOK` is used as a last resort before
+   * giving up. See `resolveRoutes` below.
+   */
   webhookUrl?: string;
   /** Per-severity webhook URLs. Else `env.DISCORD_WEBHOOK_URL_INFO|_WARN|_ERROR|_CRITICAL`. */
   severityWebhookUrls?: Partial<Record<Severity, string>>;
@@ -217,9 +223,27 @@ export interface DiscordTransportOptions {
   validateUrl?: (url: string) => void | Promise<void>;
 }
 
+/**
+ * Fleet-wide default webhook, read from `env.DISCORD_ALERT_WEBHOOK` (via the
+ * same `options.env ?? process.env` source as every other var here — so it
+ * stays testable via `options.env`/`vi.stubEnv`, not raw `process.env`).
+ *
+ * This is a DELIBERATE env-coupling, not an accidental one: it lets every
+ * consumer on the fleet get a working Discord alert channel with ZERO
+ * per-app config, by relying on a convention-named var set once at the
+ * fleet level, rather than requiring each app to thread a `webhookUrl`
+ * through. It is the last resort in the resolution order — an explicit
+ * `webhookUrl`/`severityWebhookUrls` option, or the existing per-app
+ * `env.DISCORD_WEBHOOK_URL*` vars, always win over it. See `resolveRoutes`.
+ */
+function resolveFleetDefault(env: Record<string, string | undefined>): string | undefined {
+  return env.DISCORD_ALERT_WEBHOOK?.trim() || undefined;
+}
+
 function resolveRoutes(options: DiscordTransportOptions): {
   primary: string | undefined;
   bySeverity: Partial<Record<Severity, string>>;
+  fleetDefault: string | undefined;
 } {
   const env = options.env ?? process.env;
   const primary = options.webhookUrl?.trim() || env.DISCORD_WEBHOOK_URL?.trim() || undefined;
@@ -230,7 +254,7 @@ function resolveRoutes(options: DiscordTransportOptions): {
     critical:
       options.severityWebhookUrls?.critical?.trim() || env.DISCORD_WEBHOOK_URL_CRITICAL?.trim() || undefined,
   };
-  return { primary, bySeverity };
+  return { primary, bySeverity, fleetDefault: resolveFleetDefault(env) };
 }
 
 /** service/username/timeoutMs/colors, resolved lazily per call so late `dotenv` population isn't silently dropped. */
@@ -372,14 +396,20 @@ async function attempt(
 /** Create a Discord transport bound to the given options. Config is read lazily. */
 export function createDiscordTransport(options: DiscordTransportOptions = {}): AlertTransport {
   const isConfigured = (severity?: Severity): boolean => {
-    const { primary, bySeverity } = resolveRoutes(options);
-    if (severity) return Boolean(bySeverity[severity] ?? primary);
-    return Boolean(primary) || Object.values(bySeverity).some(Boolean);
+    const { primary, bySeverity, fleetDefault } = resolveRoutes(options);
+    if (severity) return Boolean(bySeverity[severity] ?? primary ?? fleetDefault);
+    return Boolean(primary) || Object.values(bySeverity).some(Boolean) || Boolean(fleetDefault);
   };
 
+  // Resolution order, most to least specific: an explicit per-severity URL,
+  // then the explicit/env-sourced primary, then — only once both of those
+  // are exhausted for this severity — the fleet-wide default. An
+  // explicitly-provided URL (argument/option OR the existing per-app
+  // DISCORD_WEBHOOK_URL* env vars folded into `primary`/`bySeverity` by
+  // `resolveRoutes`) always wins over the fleet default.
   const resolveRoute = (severity: Severity): string | undefined => {
-    const { primary, bySeverity } = resolveRoutes(options);
-    return bySeverity[severity] ?? primary;
+    const { primary, bySeverity, fleetDefault } = resolveRoutes(options);
+    return bySeverity[severity] ?? primary ?? fleetDefault;
   };
 
   return {

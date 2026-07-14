@@ -16,14 +16,23 @@ DISCORD_WEBHOOK_URL_INFO        override for info alerts
 DISCORD_WEBHOOK_URL_WARN        override for warn alerts
 DISCORD_WEBHOOK_URL_ERROR       override for error alerts
 DISCORD_WEBHOOK_URL_CRITICAL    override for critical alerts
+DISCORD_ALERT_WEBHOOK           fleet-wide default, used when nothing above resolves
 DISCORD_ALERT_SERVICE           embed footer text (e.g. "cairn-prod")
 DISCORD_ALERT_USERNAME          webhook display name
 ```
 
 An alert's route is `severityWebhookUrls[severity] ?? webhookUrl` (env
-equivalents apply the same way). If neither resolves, that severity has no
-route — `isConfigured()` still reports true if *any* route exists, but
-`send()` throws for the unrouted severity.
+equivalents apply the same way), falling back to `env.DISCORD_ALERT_WEBHOOK`
+— the fleet-wide default alert channel — only once BOTH of those are
+exhausted for that severity. An explicitly-provided URL (an argument/option,
+or the existing per-app `DISCORD_WEBHOOK_URL*` env vars) always wins over the
+fleet default; the fleet default is the *last* resort, not a first choice.
+This makes the fleet Discord channel the default alert destination with zero
+per-consumer config — a new app that sets nothing still gets alerts, and an
+app with its own webhook is unaffected. If nothing resolves at all, that
+severity has no route — `isConfigured()` still reports true if *any* route
+(including the fleet default) exists, but `send()` throws for the unrouted
+severity, same as before.
 
 Discord's embed limits are enforced by **truncating**, never by dropping the
 alert or letting a request 400: title ≤ 256 chars, description ≤ 4096, field
@@ -55,7 +64,7 @@ const transport = createDiscordTransport({
 ## Install
 
 ```
-npm install github:andrewpopov/alert-kit#v0.2.0
+npm install github:andrewpopov/alert-kit#v0.3.0
 ```
 
 ## Use

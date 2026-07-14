@@ -553,6 +553,65 @@ describe('createDiscordTransport', () => {
     });
   });
 
+  describe('fleet-default webhook fallback (DISCORD_ALERT_WEBHOOK)', () => {
+    const FLEET_DEFAULT = 'https://discord.com/api/webhooks/fleet-default';
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('explicit webhookUrl wins even when the fleet-default env var is also set', async () => {
+      vi.stubEnv('DISCORD_ALERT_WEBHOOK', FLEET_DEFAULT);
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl });
+      await transport.send({ severity: 'info', title: 't' });
+      expect(calls[0].url).toBe(PRIMARY);
+    });
+
+    it('falls back to env.DISCORD_ALERT_WEBHOOK when no url is passed', async () => {
+      vi.stubEnv('DISCORD_ALERT_WEBHOOK', FLEET_DEFAULT);
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const transport = createDiscordTransport({ fetchImpl: impl });
+      expect(transport.isConfigured()).toBe(true);
+      expect(transport.isConfigured('critical')).toBe(true);
+      await transport.send({ severity: 'info', title: 't' });
+      expect(calls[0].url).toBe(FLEET_DEFAULT);
+    });
+
+    it('throws the existing missing-url error when neither an explicit url nor the fleet default is set', async () => {
+      const transport = createDiscordTransport({ env: {} });
+      expect(transport.isConfigured()).toBe(false);
+      await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(
+        /No Discord webhook route/,
+      );
+    });
+
+    it('runs validateUrl against the env-derived fleet-default url', async () => {
+      vi.stubEnv('DISCORD_ALERT_WEBHOOK', FLEET_DEFAULT);
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const validateUrl = vi.fn(() => {
+        throw new Error('fleet default blocked');
+      });
+      const transport = createDiscordTransport({ fetchImpl: impl, validateUrl });
+      await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(
+        'fleet default blocked',
+      );
+      expect(validateUrl).toHaveBeenCalledWith(FLEET_DEFAULT);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('a per-severity route still wins over the fleet default', async () => {
+      vi.stubEnv('DISCORD_ALERT_WEBHOOK', FLEET_DEFAULT);
+      const { impl, calls } = fakeFetch([jsonResponse(200, {})]);
+      const transport = createDiscordTransport({
+        severityWebhookUrls: { critical: CRITICAL },
+        fetchImpl: impl,
+      });
+      await transport.send({ severity: 'critical', title: 't' });
+      expect(calls[0].url).toBe(CRITICAL);
+    });
+  });
+
   describe('lazy config resolution', () => {
     it('reads service/username/timeoutMs/colors from env at send time, not at transport-creation time', async () => {
       const { impl, calls } = fakeFetch([jsonResponse(200, {})]);

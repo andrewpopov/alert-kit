@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+Add a fleet-default webhook fallback: when a consumer passes no `webhookUrl`
+(and none of the per-severity options/env vars resolve either), the Discord
+transport now falls back to `env.DISCORD_ALERT_WEBHOOK` before giving up.
+Resolution order, most to least specific: an explicit `webhookUrl`/
+`severityWebhookUrls` option or the existing per-app `DISCORD_WEBHOOK_URL*`
+env vars, THEN the fleet-wide `DISCORD_ALERT_WEBHOOK` default, THEN the
+existing "no route configured" error. An explicitly-provided URL always
+wins; `validateUrl` (if configured) still runs against whichever URL
+resolves. Backward compatible — every existing consumer passes an explicit
+URL, so behavior is unchanged for them.
+
 ## 0.1.5
 
 - Add public contribution, support, and private vulnerability-reporting policies.
