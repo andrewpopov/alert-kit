@@ -1,4 +1,4 @@
-import type { Alert, AlertResult, AlertTransport, Severity } from './types';
+import { type Alert, type AlertResult, type AlertTransport, type Severity } from './types';
 export interface Alerter {
     /** Whether the bound transport has any route configured. */
     isConfigured(): boolean;

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.redactWebhookUrl = redactWebhookUrl;
 exports.createDiscordTransport = createDiscordTransport;
+const types_1 = require("./types");
 const DEFAULT_TIMEOUT_MS = 10000;
 const MAX_RETRY_AFTER_SEC = 60;
 // Discord's documented embed limits. We enforce them by TRUNCATING rather than
@@ -319,52 +320,69 @@ function createDiscordTransport(options = {}) {
         const { primary, bySeverity, fleetDefault } = resolveRoutes(options);
         return bySeverity[severity] ?? primary ?? fleetDefault;
     };
-    return {
-        isConfigured,
-        async send(alert) {
-            const route = resolveRoute(alert.severity);
-            if (!route) {
-                options.onSkipped?.({ severity: alert.severity, title: alert.title });
-                throw new Error(`No Discord webhook route configured for severity "${alert.severity}"`);
+    const deliver = async (alert) => {
+        const route = resolveRoute(alert.severity);
+        if (!route) {
+            options.onSkipped?.({ severity: alert.severity, title: alert.title });
+            throw new types_1.AlertDeliveryError('UNCONFIGURED', false, undefined, undefined, `No Discord webhook route configured for severity "${alert.severity}"`);
+        }
+        if (options.validateUrl) {
+            await options.validateUrl(route);
+        }
+        const config = resolveConfig(options);
+        const retryOn429 = options.retryOn429 ?? true;
+        const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+        const body = {
+            ...(config.username ? { username: config.username } : {}),
+            embeds: [buildEmbed({ ...alert, service: alert.service ?? config.service }, config.colors)],
+        };
+        const startedAt = Date.now();
+        const remainingMs = () => {
+            if (config.totalTimeoutMs === undefined)
+                return config.timeoutMs;
+            return config.totalTimeoutMs - (Date.now() - startedAt);
+        };
+        const destinationId = parseWebhookId(route);
+        const attemptTimeout = () => {
+            const remaining = remainingMs();
+            if (remaining <= 0)
+                throw new types_1.AlertDeliveryError('TIMEOUT', true, destinationId, undefined, `Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+            return Math.min(config.timeoutMs, remaining);
+        };
+        let attempts = 1;
+        let result;
+        try {
+            result = await attempt(route, body, fetchImpl, attemptTimeout());
+        }
+        catch (error) {
+            throw classifyThrown(error, destinationId);
+        }
+        if (result.kind === 'rateLimited' && retryOn429) {
+            const delayMs = result.retryAfterSec * 1000;
+            if (config.totalTimeoutMs !== undefined && delayMs >= remainingMs()) {
+                throw new types_1.AlertDeliveryError('RATE_LIMITED', true, destinationId, delayMs, `Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
             }
-            if (options.validateUrl) {
-                await options.validateUrl(route);
-            }
-            const config = resolveConfig(options);
-            const retryOn429 = options.retryOn429 ?? true;
-            const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-            const body = {
-                ...(config.username ? { username: config.username } : {}),
-                embeds: [buildEmbed({ ...alert, service: alert.service ?? config.service }, config.colors)],
-            };
-            const startedAt = Date.now();
-            const remainingMs = () => {
-                if (config.totalTimeoutMs === undefined)
-                    return config.timeoutMs;
-                return config.totalTimeoutMs - (Date.now() - startedAt);
-            };
-            const attemptTimeout = () => {
-                const remaining = remainingMs();
-                if (remaining <= 0)
-                    throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
-                return Math.min(config.timeoutMs, remaining);
-            };
-            let result = await attempt(route, body, fetchImpl, attemptTimeout());
-            if (result.kind === 'rateLimited' && retryOn429) {
-                const delayMs = result.retryAfterSec * 1000;
-                if (config.totalTimeoutMs !== undefined && delayMs >= remainingMs()) {
-                    throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
-                }
-                await delay(delayMs);
+            await delay(delayMs);
+            attempts++;
+            try {
                 result = await attempt(route, body, fetchImpl, attemptTimeout());
             }
-            if (result.kind === 'rateLimited') {
-                throw new Error('Discord webhook POST failed with status 429: rate limited');
+            catch (error) {
+                throw classifyThrown(error, destinationId);
             }
-            if (result.kind === 'error') {
-                throw new Error(`Discord webhook POST failed with status ${result.status}: ${result.snippet}`);
-            }
-            options.onSent?.({ severity: alert.severity, title: alert.title, webhookId: parseWebhookId(route) });
-        },
+        }
+        if (result.kind === 'rateLimited') {
+            throw new types_1.AlertDeliveryError('RATE_LIMITED', true, destinationId, result.retryAfterSec * 1000);
+        }
+        if (result.kind === 'error') {
+            throw new types_1.AlertDeliveryError(result.status >= 500 ? 'SERVER_ERROR' : 'DESTINATION_REJECTED', result.status >= 500, destinationId, undefined, `Discord webhook POST failed with status ${result.status}`);
+        }
+        options.onSent?.({ severity: alert.severity, title: alert.title, webhookId: destinationId });
+        return { destinationId, attempts };
     };
+    return { isConfigured, deliver, async send(alert) { await deliver(alert); } };
+}
+function classifyThrown(error, destinationId) {
+    const message = error instanceof Error ? error.message : '';
+    return new types_1.AlertDeliveryError(message.includes('timed out') || message.includes('deadline') ? 'TIMEOUT' : 'NETWORK', true, destinationId, undefined, message);
 }

@@ -1,4 +1,4 @@
-import type { Alert, AlertTransport, Severity } from './types';
+import { AlertDeliveryError, type Alert, type AlertDeliveryReceipt, type AlertTransport, type Severity } from './types';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRY_AFTER_SEC = 60;
@@ -412,15 +412,12 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
     return bySeverity[severity] ?? primary ?? fleetDefault;
   };
 
-  return {
-    isConfigured,
-    async send(alert: Alert): Promise<void> {
+  const deliver = async (alert: Alert): Promise<AlertDeliveryReceipt> => {
       const route = resolveRoute(alert.severity);
       if (!route) {
         options.onSkipped?.({ severity: alert.severity, title: alert.title });
-        throw new Error(`No Discord webhook route configured for severity "${alert.severity}"`);
+        throw new AlertDeliveryError('UNCONFIGURED', false, undefined, undefined, `No Discord webhook route configured for severity "${alert.severity}"`);
       }
-
       if (options.validateUrl) {
         await options.validateUrl(route);
       }
@@ -438,30 +435,42 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
         if (config.totalTimeoutMs === undefined) return config.timeoutMs;
         return config.totalTimeoutMs - (Date.now() - startedAt);
       };
+      const destinationId = parseWebhookId(route);
       const attemptTimeout = (): number => {
         const remaining = remainingMs();
-        if (remaining <= 0) throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+        if (remaining <= 0) throw new AlertDeliveryError('TIMEOUT', true, destinationId, undefined, `Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
         return Math.min(config.timeoutMs, remaining);
       };
 
-      let result = await attempt(route, body, fetchImpl, attemptTimeout());
+      let attempts = 1;
+      let result: Attempt;
+      try { result = await attempt(route, body, fetchImpl, attemptTimeout()); }
+      catch (error) { throw classifyThrown(error, destinationId); }
       if (result.kind === 'rateLimited' && retryOn429) {
         const delayMs = result.retryAfterSec * 1000;
         if (config.totalTimeoutMs !== undefined && delayMs >= remainingMs()) {
-          throw new Error(`Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
+          throw new AlertDeliveryError('RATE_LIMITED', true, destinationId, delayMs, `Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
         }
         await delay(delayMs);
-        result = await attempt(route, body, fetchImpl, attemptTimeout());
+        attempts++;
+        try { result = await attempt(route, body, fetchImpl, attemptTimeout()); }
+        catch (error) { throw classifyThrown(error, destinationId); }
       }
 
       if (result.kind === 'rateLimited') {
-        throw new Error('Discord webhook POST failed with status 429: rate limited');
+        throw new AlertDeliveryError('RATE_LIMITED', true, destinationId, result.retryAfterSec * 1000);
       }
       if (result.kind === 'error') {
-        throw new Error(`Discord webhook POST failed with status ${result.status}: ${result.snippet}`);
+        throw new AlertDeliveryError(result.status >= 500 ? 'SERVER_ERROR' : 'DESTINATION_REJECTED', result.status >= 500, destinationId, undefined, `Discord webhook POST failed with status ${result.status}`);
       }
 
-      options.onSent?.({ severity: alert.severity, title: alert.title, webhookId: parseWebhookId(route) });
-    },
+      options.onSent?.({ severity: alert.severity, title: alert.title, webhookId: destinationId });
+      return { destinationId, attempts };
   };
+  return { isConfigured, deliver, async send(alert) { await deliver(alert); } };
+}
+
+function classifyThrown(error: unknown, destinationId: string | undefined): AlertDeliveryError {
+  const message = error instanceof Error ? error.message : '';
+  return new AlertDeliveryError(message.includes('timed out') || message.includes('deadline') ? 'TIMEOUT' : 'NETWORK', true, destinationId, undefined, message);
 }

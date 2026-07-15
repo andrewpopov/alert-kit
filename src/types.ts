@@ -12,6 +12,35 @@ export interface Alert {
 /** Result of a best-effort alert. `sent: false` means no transport route was configured. */
 export interface AlertResult {
   sent: boolean;
+  receipt?: AlertDeliveryReceipt;
+}
+
+/** Stable, secret-safe result for durable workers and audit logs. */
+export interface AlertDeliveryReceipt {
+  destinationId?: string;
+  attempts: number;
+}
+
+export type AlertDeliveryFailureCode =
+  | 'UNCONFIGURED'
+  | 'DESTINATION_REJECTED'
+  | 'RATE_LIMITED'
+  | 'TIMEOUT'
+  | 'NETWORK'
+  | 'SERVER_ERROR';
+
+/** Never include a destination URL or provider token in this error. */
+export class AlertDeliveryError extends Error {
+  readonly name = 'AlertDeliveryError';
+  constructor(
+    readonly code: AlertDeliveryFailureCode,
+    readonly retryable: boolean,
+    readonly destinationId?: string,
+    readonly retryAfterMs?: number,
+    message: string = code,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -29,4 +58,5 @@ export interface AlertTransport {
    */
   isConfigured(severity?: Severity): boolean;
   send(alert: Alert): Promise<void>;
+  deliver?(alert: Alert): Promise<AlertDeliveryReceipt>;
 }

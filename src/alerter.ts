@@ -1,4 +1,4 @@
-import type { Alert, AlertResult, AlertTransport, Severity } from './types';
+import { AlertDeliveryError, type Alert, type AlertResult, type AlertTransport, type Severity } from './types';
 
 export interface Alerter {
   /** Whether the bound transport has any route configured. */
@@ -26,7 +26,7 @@ export interface AlerterOptions {
 export function createAlerter(transport: AlertTransport, options: AlerterOptions = {}): Alerter {
   const send = async (a: Alert): Promise<void> => {
     if (!transport.isConfigured(a.severity)) {
-      throw new Error(`Alerting is not configured for severity "${a.severity}"`);
+      throw new AlertDeliveryError('UNCONFIGURED', false, undefined, undefined, `Alerting is not configured for severity "${a.severity}"`);
     }
     await transport.send(a);
   };
@@ -36,8 +36,8 @@ export function createAlerter(transport: AlertTransport, options: AlerterOptions
       options.onSkipped?.({ severity: a.severity, title: a.title });
       return { sent: false };
     }
-    await transport.send(a);
-    return { sent: true };
+    const receipt = transport.deliver ? await transport.deliver(a) : (await transport.send(a), undefined);
+    return receipt ? { sent: true, receipt } : { sent: true };
   };
 
   const bySeverity =

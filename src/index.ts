@@ -11,6 +11,7 @@
  * DISCORD_ALERT_SERVICE (embed footer), DISCORD_ALERT_USERNAME (webhook name).
  */
 
-export type { Severity, Alert, AlertResult, AlertTransport } from './types';
+export { AlertDeliveryError } from './types';
+export type { Severity, Alert, AlertResult, AlertTransport, AlertDeliveryReceipt, AlertDeliveryFailureCode } from './types';
 export { createDiscordTransport, type DiscordTransportOptions } from './discord';
 export { createAlerter, type Alerter, type AlerterOptions } from './alerter';
