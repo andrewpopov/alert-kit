@@ -1,4 +1,4 @@
-import type { AlertTransport, Severity } from './types';
+import { type AlertTransport, type Severity } from './types';
 export interface DiscordTransportOptions {
     /** Config source. Defaults to `process.env`. Read lazily on every call. */
     env?: Record<string, string | undefined>;

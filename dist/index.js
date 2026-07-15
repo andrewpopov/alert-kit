@@ -12,7 +12,9 @@
  * DISCORD_ALERT_SERVICE (embed footer), DISCORD_ALERT_USERNAME (webhook name).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createAlerter = exports.createDiscordTransport = void 0;
+exports.createAlerter = exports.createDiscordTransport = exports.AlertDeliveryError = void 0;
+var types_1 = require("./types");
+Object.defineProperty(exports, "AlertDeliveryError", { enumerable: true, get: function () { return types_1.AlertDeliveryError; } });
 var discord_1 = require("./discord");
 Object.defineProperty(exports, "createDiscordTransport", { enumerable: true, get: function () { return discord_1.createDiscordTransport; } });
 var alerter_1 = require("./alerter");
