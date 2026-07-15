@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- Add typed, secret-safe durable delivery receipts and failure outcomes.
+- Add retry ownership control for durable workers while preserving `send()`.
+
 ## 0.3.0
 
 Add a fleet-default webhook fallback: when a consumer passes no `webhookUrl`
