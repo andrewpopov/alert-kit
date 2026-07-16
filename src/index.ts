@@ -15,3 +15,13 @@ export { AlertDeliveryError } from './types';
 export type { Severity, Alert, AlertResult, AlertTransport, AlertDeliveryReceipt, AlertDeliveryFailureCode } from './types';
 export { createDiscordTransport, type DiscordTransportOptions } from './discord';
 export { createAlerter, type Alerter, type AlerterOptions } from './alerter';
+export {
+  severityFromDeployStatus,
+  alertsFromDeployEvent,
+  parseDeployMonitorEvent,
+  type DeployMonitorEvent,
+  type DeployMonitorAlert,
+  type DeployMonitorStatus,
+  type DeployMonitorKind,
+  type ParseDeployMonitorEventResult,
+} from './deploy-events';

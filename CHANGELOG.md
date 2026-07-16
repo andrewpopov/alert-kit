@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+- Add `src/deploy-events.ts`: a typed bridge for deploy-kit monitor events.
+  `parseDeployMonitorEvent(json)` strictly parses and validates the batched
+  stdin payload without throwing on malformed input;
+  `severityFromDeployStatus(status, kind)` maps deploy-kit's
+  `ok|warn|crit` × `alert|escalation|reminder|recovery` shape onto alert-kit's
+  `Severity`, failing closed to `'critical'` for any unrecognized status
+  instead of silently dropping it; `alertsFromDeployEvent(event)` maps a
+  batched event to one `Alert` per contained alert, preserving
+  `eventId`/`host`/`createdAtMs`/`alertId`/`kind`/`status` in `Alert.fields`.
+  Replaces hand-rolled per-consumer mapping of deploy-kit's status enum.
+
 ## 0.4.0
 
 - Add typed, secret-safe durable delivery receipts and failure outcomes.

@@ -100,11 +100,78 @@ await alerter.alert({ severity: 'critical', title: 'DB connection pool exhausted
 | `alerter.alertBestEffort(a)` | Send if configured, else `{ sent: false }` (no throw). |
 | `alerter.info/warn/error/critical(title, opts?)` | Best-effort convenience wrappers. |
 | `alerter.isConfigured()` | Whether the bound transport has any route configured. |
+| `parseDeployMonitorEvent(json)` | Strictly parse/validate a deploy-kit monitor event; never throws. |
+| `severityFromDeployStatus(status, kind)` | Map deploy-kit's status/kind to a `Severity`; fails closed to `'critical'`. |
+| `alertsFromDeployEvent(event)` | Map a batched deploy-kit event to `Alert[]`. |
 
 `Alert`: `{ severity, title, message?, fields?, service?, timestamp? }`.
 `DiscordTransportOptions`: `env`, `webhookUrl`, `severityWebhookUrls`,
 `service`, `username`, `timeoutMs`, `colors`, `retryOn429`, `fetchImpl`,
 `totalTimeoutMs`, `onSent`, `onSkipped`, `validateUrl`.
+
+## Bridging deploy-kit monitor events
+
+deploy-kit's monitor delivers a batched event as JSON on stdin to a
+host-configured command:
+
+```json
+{
+  "eventId": "evt-abc",
+  "createdAtMs": 1700000000123,
+  "host": "api-02.prod",
+  "alerts": [
+    { "id": "a1", "kind": "escalation", "status": "crit", "message": "service down" },
+    { "id": "a2", "kind": "reminder", "status": "warn", "message": "still degraded" }
+  ]
+}
+```
+
+`deploy-events.ts` gives a typed bridge from that shape to alert-kit's
+`Alert`, so consumers stop hand-mapping deploy-kit's `status`/`kind` enum
+themselves:
+
+```ts
+import { createReadStream } from 'node:fs';
+import { createDiscordTransport, createAlerter, parseDeployMonitorEvent, alertsFromDeployEvent } from '@andrewpopov/alert-kit';
+
+const alerter = createAlerter(createDiscordTransport({ service: 'deploy-kit' }));
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function main() {
+  const raw = await readStdin();
+  const result = parseDeployMonitorEvent(raw);
+  if (!result.ok) {
+    console.error('deploy-kit monitor: malformed event', result.error);
+    process.exitCode = 1;
+    return;
+  }
+
+  for (const alert of alertsFromDeployEvent(result.event)) {
+    await alerter.alertBestEffort(alert);
+  }
+}
+
+main();
+```
+
+Mapping table (`severityFromDeployStatus`):
+
+| deploy-kit `status` | deploy-kit `kind` | alert-kit `Severity` |
+|---|---|---|
+| `crit` | any | `critical` |
+| `warn` | any | `warn` |
+| `ok` | any (including `recovery`) | `info` |
+| anything else | any | `critical` (fail closed) |
+
+**Fail-closed rule:** an unrecognized `status` value is never silently
+downgraded or dropped — it maps to `'critical'`, and the raw value is
+preserved in the mapped `Alert.message` (as `unknownStatus=...`) so it's
+visible in the alert itself, not just in a log a human might miss.
 
 ## Verify locally
 
