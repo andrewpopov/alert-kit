@@ -4,9 +4,17 @@
   "description": "Transport-pluggable alert primitive with a built-in Discord transport: rich embeds, per-severity webhook routing, bounded timeout, 429 retry, graceful-degradation send, and a test seam.",
   "author": "Andrew Popov",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/andrewpopov/alert-kit.git" },
+  "repository": { "type": "git", "url": "git+https://github.com/andrewpopov/alert-kit.git" },
   "bugs": { "url": "https://github.com/andrewpopov/alert-kit/issues" },
   "homepage": "https://github.com/andrewpopov/alert-kit#readme",
+  "keywords": [
+    "alerts",
+    "discord",
+    "webhook",
+    "notifications",
+    "retry",
+    "typescript"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
