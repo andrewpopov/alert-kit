@@ -31,6 +31,13 @@ wins; `validateUrl` (if configured) still runs against whichever URL
 resolves. Backward compatible — every existing consumer passes an explicit
 URL, so behavior is unchanged for them.
 
+## 0.2.0
+
+- Optional destination-URL guard rail: an injectable `validateUrl` hook runs
+  against the resolved webhook URL before delivery (pair with
+  `@andrewpopov/url-guard`). (#6)
+- Retry timeout is now a total delivery deadline rather than per-attempt. (#4)
+
 ## 0.1.5
 
 - Add public contribution, support, and private vulnerability-reporting policies.
