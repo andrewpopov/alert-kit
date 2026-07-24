@@ -101,6 +101,10 @@ guard.
 
 ## 0.1.1 — 2026-07-11
 
+> This entry and `0.1.0` below predate this repository. Its first commit already
+> ships `0.1.2`, so those two versions were never published from here and have no
+> `v0.1.1` / `v0.1.0` tags. They are kept for history.
+
 Correctness fixes, no API-shape changes beyond `AlertTransport.isConfigured`
 gaining an optional `severity` parameter.
 
