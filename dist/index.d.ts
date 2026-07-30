@@ -12,6 +12,7 @@
  */
 export { AlertDeliveryError } from './types';
 export type { Severity, Alert, AlertResult, AlertTransport, AlertDeliveryReceipt, AlertDeliveryFailureCode } from './types';
-export { createDiscordTransport, type DiscordTransportOptions } from './discord';
+export { createDiscordTransport, redactWebhookUrl, type DiscordTransportOptions } from './discord';
+export { stepCheck, unsentAlertState, initialSuppressionState, type SuppressionStatus, type NotificationPhase, type SuppressionAlertKind, type SuppressionCheckResult, type SuppressionState, type SuppressionOptions, type SuppressionAlert, type SuppressionStep, } from './suppression';
 export { createAlerter, type Alerter, type AlerterOptions } from './alerter';
 export { severityFromDeployStatus, alertsFromDeployEvent, parseDeployMonitorEvent, type DeployMonitorEvent, type DeployMonitorAlert, type DeployMonitorStatus, type DeployMonitorKind, type ParseDeployMonitorEventResult, } from './deploy-events';
