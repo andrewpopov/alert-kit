@@ -210,9 +210,18 @@ function describeError(err) {
  * Strip the webhook URL (a bearer credential) out of any text before it can be
  * logged. Redacts the exact URL we were given, plus anything webhook-shaped, so
  * a mangled or partially-quoted variant can't slip through.
+ *
+ * Takes `unknown`, not `string`, and coerces. Every real call site is a catch
+ * block doing `redactWebhookUrl(err.message ?? err, url)`, where the value is a
+ * string only when something threw an Error with a message — a thrown object,
+ * a rejected `undefined`, or a numeric exit status all arrive as non-strings. If
+ * this threw on those, it would throw from INSIDE the error handler of the very
+ * alert that was reporting the original failure, and a redaction helper that
+ * turns a logged failure into an unhandled one is worse than no helper.
+ * db-backup's copy coerced from the start; this is that behaviour folded back in.
  */
 function redactWebhookUrl(text, url) {
-    let out = text;
+    let out = String(text);
     if (url && url.length > 0)
         out = out.split(url).join('<redacted-webhook-url>');
     out = out.replace(/https?:\/\/\S*?\/webhooks\/\S+/gi, '<redacted-webhook-url>');

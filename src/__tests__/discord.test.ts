@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createDiscordTransport } from '../discord';
+import { createDiscordTransport, redactWebhookUrl } from '../discord';
 import { createAlerter } from '../alerter';
 import type { Alert } from '../types';
 
@@ -679,5 +679,31 @@ describe('the webhook URL is never leaked in an error', () => {
   it('still says WHAT failed after redaction', async () => {
     const transport = createDiscordTransport({ webhookUrl: `discord.com/api/webhooks/1/${TOKEN}` });
     await expect(transport.send({ severity: 'info', title: 't' })).rejects.toThrow(/failed/i);
+  });
+});
+
+describe('redactWebhookUrl on non-string input', () => {
+  const URL_ = 'https://discord.com/api/webhooks/123/abcdef';
+
+  // Every real call site is a catch block doing `redactWebhookUrl(err.message ?? err, url)`.
+  // A thrown non-Error, a rejected undefined, or a numeric exit status all arrive here as
+  // non-strings, and throwing on them would throw from inside the handler reporting the
+  // original failure. db-backup hit exactly this and had to keep its own coercing copy.
+  it.each([
+    ['an Error object', new Error(`curl ${URL_} failed`), '<redacted-webhook-url>'],
+    ['undefined', undefined, 'undefined'],
+    ['null', null, 'null'],
+    ['a number (exit status)', 42, '42'],
+    ['a plain object', { code: 'ENOTFOUND' }, '[object Object]'],
+  ])('coerces %s instead of throwing', (_label, input, expected) => {
+    expect(() => redactWebhookUrl(input, URL_)).not.toThrow();
+    expect(redactWebhookUrl(input, URL_)).toContain(expected);
+  });
+
+  it('still redacts the URL out of a coerced Error', () => {
+    const out = redactWebhookUrl(new Error(`POST ${URL_} failed`), URL_);
+    expect(out).not.toContain(URL_);
+    expect(out).toContain('<redacted-webhook-url>');
+    expect(out).toMatch(/failed/);
   });
 });
