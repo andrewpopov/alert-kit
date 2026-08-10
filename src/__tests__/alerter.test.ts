@@ -52,6 +52,23 @@ describe('createAlerter', () => {
     await expect(alerter.alertBestEffort({ severity: 'info', title: 't' })).rejects.toThrow('boom');
   });
 
+  it('PKG-141 F3: a throwing onSkipped does not prevent alertBestEffort from returning { sent: false }', async () => {
+    const { transport } = fakeTransport(false);
+    const onSkipped = vi.fn(() => {
+      throw new Error('onSkipped boom');
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const alerter = createAlerter(transport, { onSkipped });
+      await expect(alerter.alertBestEffort({ severity: 'info', title: 't' })).resolves.toEqual({ sent: false });
+      expect(onSkipped).toHaveBeenCalledTimes(1);
+      // The failure must not be swallowed with no trace at all.
+      expect(consoleErrorSpy).toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it('info/warn/error/critical are best-effort convenience wrappers', async () => {
     const { transport, sent } = fakeTransport(true);
     const alerter = createAlerter(transport);

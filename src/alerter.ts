@@ -18,7 +18,12 @@ export interface Alerter {
 }
 
 export interface AlerterOptions {
-  /** Called after a best-effort alert is skipped for lack of transport config. */
+  /**
+   * Called after a best-effort alert is skipped for lack of transport
+   * config. A thrown/rejected `onSkipped` is caught and logged (via
+   * `console.error`), never allowed to make `alertBestEffort` throw — the
+   * unconfigured path always resolves `{ sent: false }`.
+   */
   onSkipped?: (info: { severity: Severity; title: string }) => void;
 }
 
@@ -33,7 +38,15 @@ export function createAlerter(transport: AlertTransport, options: AlerterOptions
 
   const sendBestEffort = async (a: Alert): Promise<AlertResult> => {
     if (!transport.isConfigured(a.severity)) {
-      options.onSkipped?.({ severity: a.severity, title: a.title });
+      // No transport failure occurred here at all — a throwing `onSkipped`
+      // must not defeat the documented never-throws contract of the
+      // unconfigured path, so it's contained (logged, not swallowed
+      // silently) rather than allowed to propagate.
+      try {
+        options.onSkipped?.({ severity: a.severity, title: a.title });
+      } catch (err) {
+        console.error(`alert-kit: onSkipped callback threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
       return { sent: false };
     }
     const receipt = transport.deliver ? await transport.deliver(a) : (await transport.send(a), undefined);
