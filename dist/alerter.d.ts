@@ -16,7 +16,12 @@ export interface Alerter {
     critical(title: string, opts?: Omit<Alert, 'severity' | 'title'>): Promise<AlertResult>;
 }
 export interface AlerterOptions {
-    /** Called after a best-effort alert is skipped for lack of transport config. */
+    /**
+     * Called after a best-effort alert is skipped for lack of transport
+     * config. A thrown/rejected `onSkipped` is caught and logged (via
+     * `console.error`), never allowed to make `alertBestEffort` throw — the
+     * unconfigured path always resolves `{ sent: false }`.
+     */
     onSkipped?: (info: {
         severity: Severity;
         title: string;

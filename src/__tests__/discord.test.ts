@@ -551,6 +551,78 @@ describe('createDiscordTransport', () => {
       await expect(transport.send({ severity: 'info', title: 't' })).resolves.toBeUndefined();
       expect(calls).toHaveLength(1);
     });
+
+    it('PKG-141 F1: revalidates the route before a 429 retry POST, blocking the retry when the second validation fails', async () => {
+      vi.useFakeTimers();
+      try {
+        const { impl, calls } = fakeFetch([jsonResponse(429, { retry_after: 1 }), jsonResponse(200, {})]);
+        let callCount = 0;
+        const validateUrl = vi.fn(() => {
+          callCount++;
+          if (callCount === 2) throw new Error('revalidation blocked');
+        });
+        const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, validateUrl });
+        const send = transport.send({ severity: 'info', title: 't' });
+        const assertion = expect(send).rejects.toThrow('revalidation blocked');
+        await vi.advanceTimersByTimeAsync(1000);
+        await assertion;
+        // The retry POST must never go out once revalidation blocks it.
+        expect(calls).toHaveLength(1);
+        expect(validateUrl).toHaveBeenCalledTimes(2);
+        expect(validateUrl).toHaveBeenNthCalledWith(1, PRIMARY);
+        expect(validateUrl).toHaveBeenNthCalledWith(2, PRIMARY);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('PKG-141 F1: validateUrl runs before both the initial POST and the retry POST when both attempts succeed/rate-limit', async () => {
+      vi.useFakeTimers();
+      try {
+        const { impl } = fakeFetch([jsonResponse(429, { retry_after: 1 }), jsonResponse(200, {})]);
+        const validateUrl = vi.fn();
+        const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, validateUrl });
+        const send = transport.send({ severity: 'info', title: 't' });
+        await vi.advanceTimersByTimeAsync(1000);
+        await expect(send).resolves.toBeUndefined();
+        expect(validateUrl).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('PKG-141 F2: onSent must not turn a successful delivery into a failure', () => {
+    it('a throwing onSent does not reject deliver(), and the true receipt is still returned', async () => {
+      const { impl } = fakeFetch([jsonResponse(200, {})]);
+      const onSent = vi.fn(() => {
+        throw new Error('onSent boom');
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, onSent });
+        await expect(transport.deliver!({ severity: 'info', title: 't' })).resolves.toMatchObject({ attempts: 1 });
+        expect(onSent).toHaveBeenCalledTimes(1);
+        // The failure must not be swallowed with no trace at all.
+        expect(consoleErrorSpy).toHaveBeenCalled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('a throwing onSent does not reject send() either', async () => {
+      const { impl } = fakeFetch([jsonResponse(200, {})]);
+      const onSent = vi.fn(() => {
+        throw new Error('onSent boom');
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const transport = createDiscordTransport({ webhookUrl: PRIMARY, fetchImpl: impl, onSent });
+        await expect(transport.send({ severity: 'info', title: 't' })).resolves.toBeUndefined();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
   });
 
   describe('fleet-default webhook fallback (DISCORD_ALERT_WEBHOOK)', () => {
@@ -705,5 +777,24 @@ describe('redactWebhookUrl on non-string input', () => {
     expect(out).not.toContain(URL_);
     expect(out).toContain('<redacted-webhook-url>');
     expect(out).toMatch(/failed/);
+  });
+});
+
+describe('PKG-141 F3 (sibling): the transport\'s own unconfigured path', () => {
+  it('contains a throwing onSkipped so the caller still sees AlertDeliveryError(UNCONFIGURED), not the callback\'s error — alertBestEffort keys on that code to return { sent: false }', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const transport = createDiscordTransport({
+        onSkipped: () => {
+          throw new Error('onSkipped boom');
+        },
+      });
+
+      await expect(
+        transport.send({ severity: 'info', title: 'no route configured' }),
+      ).rejects.toMatchObject({ code: 'UNCONFIGURED' });
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

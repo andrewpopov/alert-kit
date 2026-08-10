@@ -12,7 +12,16 @@ function createAlerter(transport, options = {}) {
     };
     const sendBestEffort = async (a) => {
         if (!transport.isConfigured(a.severity)) {
-            options.onSkipped?.({ severity: a.severity, title: a.title });
+            // No transport failure occurred here at all — a throwing `onSkipped`
+            // must not defeat the documented never-throws contract of the
+            // unconfigured path, so it's contained (logged, not swallowed
+            // silently) rather than allowed to propagate.
+            try {
+                options.onSkipped?.({ severity: a.severity, title: a.title });
+            }
+            catch (err) {
+                console.error(`alert-kit: onSkipped callback threw: ${err instanceof Error ? err.message : String(err)}`);
+            }
             return { sent: false };
         }
         const receipt = transport.deliver ? await transport.deliver(a) : (await transport.send(a), undefined);

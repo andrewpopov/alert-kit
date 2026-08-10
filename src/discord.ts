@@ -205,7 +205,10 @@ export interface DiscordTransportOptions {
    * Called after a successful POST. `webhookId` is the non-secret id segment
    * parsed out of the webhook URL (`undefined` if the URL doesn't match the
    * expected shape) — the full URL, which embeds a bearer token, is
-   * deliberately withheld.
+   * deliberately withheld. Delivery has already succeeded by the time this
+   * runs: a thrown/rejected `onSent` is caught and logged (via
+   * `console.error`, redacted), never allowed to turn a completed delivery
+   * into a rejected `send()`/`deliver()`.
    */
   onSent?: (info: { severity: Severity; title: string; webhookId: string | undefined }) => void;
   /** Called when an alert's severity has no configured route (transport still throws). */
@@ -424,12 +427,22 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
   const deliver = async (alert: Alert): Promise<AlertDeliveryReceipt> => {
       const route = resolveRoute(alert.severity);
       if (!route) {
-        options.onSkipped?.({ severity: alert.severity, title: alert.title });
+        // Contained for the same reason as `onSkipped` in alerter.ts, and for
+        // one more: an escaping callback error would REPLACE the
+        // AlertDeliveryError below, and UNCONFIGURED is precisely the code
+        // `alertBestEffort` keys on to return `{ sent: false }` without
+        // throwing. A host's logging bug would otherwise turn "nothing is
+        // configured" into a hard failure.
+        try {
+          options.onSkipped?.({ severity: alert.severity, title: alert.title });
+        } catch (err) {
+          console.error(`alert-kit: onSkipped callback threw: ${describeError(err)}`);
+        }
         throw new AlertDeliveryError('UNCONFIGURED', false, undefined, undefined, `No Discord webhook route configured for severity "${alert.severity}"`);
       }
-      if (options.validateUrl) {
-        await options.validateUrl(route);
-      }
+      const validateRoute = async (): Promise<void> => {
+        if (options.validateUrl) await options.validateUrl(route);
+      };
 
       const config = resolveConfig(options);
       const retryOn429 = options.retryOn429 ?? true;
@@ -453,6 +466,7 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
 
       let attempts = 1;
       let result: Attempt;
+      await validateRoute();
       try { result = await attempt(route, body, fetchImpl, attemptTimeout()); }
       catch (error) { throw classifyThrown(error, destinationId); }
       if (result.kind === 'rateLimited' && retryOn429) {
@@ -461,6 +475,13 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
           throw new AlertDeliveryError('RATE_LIMITED', true, destinationId, delayMs, `Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
         }
         await delay(delayMs);
+        // Revalidate immediately before the retry POST too — same guard rail,
+        // every attempt, not just the first. A redirect or a mutated route
+        // between attempts is exactly what this hook exists to catch, and a
+        // validation failure here must surface unwrapped, the same as the
+        // first attempt's (i.e. NOT run inside the `attempt()` try/catch
+        // below, which reclassifies errors via `classifyThrown`).
+        await validateRoute();
         attempts++;
         try { result = await attempt(route, body, fetchImpl, attemptTimeout()); }
         catch (error) { throw classifyThrown(error, destinationId); }
@@ -473,7 +494,17 @@ export function createDiscordTransport(options: DiscordTransportOptions = {}): A
         throw new AlertDeliveryError(result.status >= 500 ? 'SERVER_ERROR' : 'DESTINATION_REJECTED', result.status >= 500, destinationId, undefined, `Discord webhook POST failed with status ${result.status}`);
       }
 
-      options.onSent?.({ severity: alert.severity, title: alert.title, webhookId: destinationId });
+      // A host callback must not be able to turn a completed delivery into a
+      // failure: Discord already accepted the POST by this point, so an
+      // `onSent` throw is contained (logged, redacted) rather than allowed to
+      // reject `deliver()`/`send()` — otherwise the caller would see a
+      // failure and retry a delivery that genuinely succeeded, causing a
+      // duplicate alert.
+      try {
+        options.onSent?.({ severity: alert.severity, title: alert.title, webhookId: destinationId });
+      } catch (err) {
+        console.error(`alert-kit: onSent callback threw: ${redactWebhookUrl(describeError(err), route)}`);
+      }
       return { destinationId, attempts };
   };
   return { isConfigured, deliver, async send(alert) { await deliver(alert); } };

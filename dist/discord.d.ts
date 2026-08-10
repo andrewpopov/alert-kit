@@ -30,7 +30,10 @@ export interface DiscordTransportOptions {
      * Called after a successful POST. `webhookId` is the non-secret id segment
      * parsed out of the webhook URL (`undefined` if the URL doesn't match the
      * expected shape) — the full URL, which embeds a bearer token, is
-     * deliberately withheld.
+     * deliberately withheld. Delivery has already succeeded by the time this
+     * runs: a thrown/rejected `onSent` is caught and logged (via
+     * `console.error`, redacted), never allowed to turn a completed delivery
+     * into a rejected `send()`/`deliver()`.
      */
     onSent?: (info: {
         severity: Severity;
