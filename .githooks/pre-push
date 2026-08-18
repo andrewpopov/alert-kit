@@ -54,9 +54,21 @@ if [ "$(lock_state)" != "$lock_before" ]; then
     'tested is not what you are pushing. Review and commit the lockfile.'
 fi
 
-# No verify-pins step here: deploy-kit devDepends on alert-kit, so adding
-# deploy-kit as a devDependency here would create a dependency cycle
-# (alert-kit -> deploy-kit -> alert-kit).
+# A `github:owner/repo#tag` pin does NOT re-resolve when only the tag moves —
+# npm keys the lockfile on the resolved commit, so a bumped pin installs clean
+# while leaving the old code on disk. This reads the installed version off disk
+# and compares it to the pin. It is the first real check for exactly that
+# reason: everything below would otherwise verify the wrong code.
+#
+# deploy-kit devDepends on this package, which looks like a cycle but is not:
+# deploy-kit has zero runtime dependencies, and npm never installs a
+# dependency's devDependencies. Verified — it installs flat, with no nested
+# node_modules.
+step 'verify-pins'
+npx --no-install deploy-kit verify-pins || fail 'verify-pins' \
+  'A pinned dependency on disk does not match its manifest pin.' \
+  'Install it explicitly (npm install <name>@github:owner/repo#<tag>) and' \
+  'confirm by reading node_modules/<name>/package.json — not the manifest.'
 
 # lint + types + tests + build + pack + bins (per repo's own verify chain).
 step 'verify'
