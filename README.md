@@ -64,7 +64,7 @@ const transport = createDiscordTransport({
 ## Install
 
 ```
-npm install github:andrewpopov/alert-kit#v0.5.0
+npm install github:andrewpopov/alert-kit#v0.6.2
 ```
 
 ## Use
