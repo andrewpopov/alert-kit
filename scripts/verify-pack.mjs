@@ -25,6 +25,7 @@ const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
 const EXPECTED = [
   'createDiscordTransport',
   'createDiscordDmTransport',
+  'createFallbackTransport',
   'createAlerter',
 ];
 

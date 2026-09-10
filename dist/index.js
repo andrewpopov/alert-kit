@@ -13,9 +13,13 @@
  * DISCORD_ALERT_SERVICE (embed footer), DISCORD_ALERT_USERNAME (webhook name).
  *
  * Env (DM transport): DISCORD_BOT_TOKEN, DISCORD_ALERT_DM_USER_ID.
+ *
+ * `createFallbackTransport` composes any transports (e.g. DM primary +
+ * webhook fallback) so an alert isn't dropped when the primary route can't
+ * deliver.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseDeployMonitorEvent = exports.alertsFromDeployEvent = exports.severityFromDeployStatus = exports.createAlerter = exports.initialSuppressionState = exports.unsentAlertState = exports.stepCheck = exports.redactBotToken = exports.createDiscordDmTransport = exports.redactWebhookUrl = exports.createDiscordTransport = exports.AlertDeliveryError = void 0;
+exports.parseDeployMonitorEvent = exports.alertsFromDeployEvent = exports.severityFromDeployStatus = exports.createAlerter = exports.initialSuppressionState = exports.unsentAlertState = exports.stepCheck = exports.AggregateAlertDeliveryError = exports.createFallbackTransport = exports.redactBotToken = exports.createDiscordDmTransport = exports.redactWebhookUrl = exports.createDiscordTransport = exports.AlertDeliveryError = void 0;
 var types_1 = require("./types");
 Object.defineProperty(exports, "AlertDeliveryError", { enumerable: true, get: function () { return types_1.AlertDeliveryError; } });
 var discord_1 = require("./discord");
@@ -24,6 +28,9 @@ Object.defineProperty(exports, "redactWebhookUrl", { enumerable: true, get: func
 var discord_dm_1 = require("./discord-dm");
 Object.defineProperty(exports, "createDiscordDmTransport", { enumerable: true, get: function () { return discord_dm_1.createDiscordDmTransport; } });
 Object.defineProperty(exports, "redactBotToken", { enumerable: true, get: function () { return discord_dm_1.redactBotToken; } });
+var fallback_1 = require("./fallback");
+Object.defineProperty(exports, "createFallbackTransport", { enumerable: true, get: function () { return fallback_1.createFallbackTransport; } });
+Object.defineProperty(exports, "AggregateAlertDeliveryError", { enumerable: true, get: function () { return fallback_1.AggregateAlertDeliveryError; } });
 var suppression_1 = require("./suppression");
 Object.defineProperty(exports, "stepCheck", { enumerable: true, get: function () { return suppression_1.stepCheck; } });
 Object.defineProperty(exports, "unsentAlertState", { enumerable: true, get: function () { return suppression_1.unsentAlertState; } });

@@ -12,12 +12,32 @@
  * DISCORD_ALERT_SERVICE (embed footer), DISCORD_ALERT_USERNAME (webhook name).
  *
  * Env (DM transport): DISCORD_BOT_TOKEN, DISCORD_ALERT_DM_USER_ID.
+ *
+ * `createFallbackTransport` composes any transports (e.g. DM primary +
+ * webhook fallback) so an alert isn't dropped when the primary route can't
+ * deliver.
  */
 
 export { AlertDeliveryError } from './types';
-export type { Severity, Alert, AlertResult, AlertTransport, AlertDeliveryReceipt, AlertDeliveryFailureCode } from './types';
+export type {
+  Severity,
+  Alert,
+  AlertResult,
+  AlertTransport,
+  AlertDeliveryReceipt,
+  AlertDeliveryFailureCode,
+  AttemptedRouteOutcome,
+} from './types';
 export { createDiscordTransport, redactWebhookUrl, type DiscordTransportOptions } from './discord';
 export { createDiscordDmTransport, redactBotToken, type DiscordDmTransportOptions } from './discord-dm';
+export {
+  createFallbackTransport,
+  AggregateAlertDeliveryError,
+  type FallbackTransportEntry,
+  type FallbackTransportChild,
+  type FallbackTransportOptions,
+  type DegradedInfo,
+} from './fallback';
 export {
   stepCheck,
   unsentAlertState,
