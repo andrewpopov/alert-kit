@@ -226,5 +226,72 @@ describe('createFallbackTransport', () => {
         consoleErrorSpy.mockRestore();
       }
     });
+
+    // --- Finding 1: the observer's OWN error must never be logged unredacted ---
+    it('never logs the observer\'s own thrown error text — a synthetic bot token in it must appear in NO console output', async () => {
+      const SYNTHETIC_TOKEN = 'FAKE_BOT_TOKEN_a1b2c3d4e5f6';
+      const failure = new AlertDeliveryError('TIMEOUT', true);
+      const { transport: dm } = deliverTransport({ failWith: failure });
+      const { transport: webhook } = deliverTransport({ result: { attempts: 1, destinationId: 'wh-1' } });
+      const onDegraded = vi.fn(() => {
+        throw new Error(`leaked secret: ${SYNTHETIC_TOKEN}`);
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const transport = createFallbackTransport([dm, webhook], { onDegraded });
+        const receipt = await transport.deliver!(ALERT);
+        expect(receipt.destinationId).toBe('wh-1');
+        expect(onDegraded).toHaveBeenCalledTimes(1);
+        for (const call of [...consoleErrorSpy.mock.calls, ...consoleLogSpy.mock.calls, ...consoleWarnSpy.mock.calls]) {
+          expect(JSON.stringify(call)).not.toContain(SYNTHETIC_TOKEN);
+        }
+      } finally {
+        consoleErrorSpy.mockRestore();
+        consoleLogSpy.mockRestore();
+        consoleWarnSpy.mockRestore();
+      }
+    });
+
+    // --- Finding 2: an async observer's rejection must be contained, not left unhandled ---
+    it('an async onDegraded that rejects does not escape as an unhandled rejection, and delivery still succeeds', async () => {
+      const failure = new AlertDeliveryError('TIMEOUT', true);
+      const { transport: dm } = deliverTransport({ failWith: failure });
+      const { transport: webhook } = deliverTransport({ result: { attempts: 1, destinationId: 'wh-1' } });
+      let calls = 0;
+      // Deliberately NOT `vi.fn()`: vitest's mock wrapper records the
+      // returned promise's settlement internally (to populate
+      // `mock.results`), which itself attaches a rejection handler and would
+      // mask the exact "nobody attached a handler" condition this test
+      // exists to catch. A plain function is the only way to observe the
+      // real, unhandled-by-anyone-else rejection.
+      const onDegraded = async (): Promise<void> => {
+        calls++;
+        throw new Error('async onDegraded boom');
+      };
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const unhandled: unknown[] = [];
+      const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandledRejection);
+      try {
+        const transport = createFallbackTransport([dm, webhook], { onDegraded });
+        const receipt = await transport.deliver!(ALERT);
+        expect(receipt.destinationId).toBe('wh-1');
+        expect(calls).toBe(1);
+        // Give the rejected promise's handler a turn to run. Node's
+        // unhandled-rejection detection needs the microtask queue to fully
+        // drain; under vitest's own async wrapping that takes more than one
+        // macrotask tick, so wait several `setImmediate` turns rather than
+        // just one.
+        for (let i = 0; i < 5; i++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(unhandled).toHaveLength(0);
+      } finally {
+        process.off('unhandledRejection', onUnhandledRejection);
+        consoleErrorSpy.mockRestore();
+      }
+    });
   });
 });

@@ -198,7 +198,7 @@ function createDiscordTransport(options = {}) {
                 options.onSkipped?.({ severity: alert.severity, title: alert.title });
             }
             catch (err) {
-                console.error(`alert-kit: onSkipped callback threw: ${describeError(err)}`);
+                console.error(`alert-kit: onSkipped callback threw: ${redactWebhookUrl(describeError(err))}`);
             }
             throw new types_1.AlertDeliveryError('UNCONFIGURED', false, undefined, undefined, `No Discord webhook route configured for severity "${alert.severity}"`);
         }

@@ -191,6 +191,15 @@ describe('createDiscordDmTransport', () => {
       const err = await transport.deliver!({ severity: 'info', title: 't' }).catch((e) => e);
       expect(err).toMatchObject({ code: 'SERVER_ERROR' });
     });
+
+    it('a non-snowflake id (e.g. a leaked-looking string) from open_dm is rejected, never surfaced', async () => {
+      const suspiciousValue = `secret-${TOKEN}`;
+      const { impl } = fakeFetch([jsonResponse(200, { id: suspiciousValue })]);
+      const transport = createDiscordDmTransport({ botToken: TOKEN, userId: USER_ID, fetchImpl: impl });
+      const err = await transport.deliver!({ severity: 'info', title: 't' }).catch((e) => e);
+      expect(err).toMatchObject({ code: 'SERVER_ERROR' });
+      expect(JSON.stringify(err)).not.toContain(suspiciousValue);
+    });
   });
 
   describe('deadline', () => {
@@ -200,6 +209,31 @@ describe('createDiscordDmTransport', () => {
       const err = await transport.deliver!({ severity: 'info', title: 't' }).catch((e) => e);
       expect(err).toMatchObject({ code: 'TIMEOUT' });
       expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe('deadline is independent of fetchImpl honouring abort', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('rejects as TIMEOUT within the deadline even when the injected fetchImpl (and its body reader) ignore the abort signal', async () => {
+      const impl = vi.fn(async () => {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          // Never resolves and never observes `signal` — simulates a
+          // fetch implementation whose body reader ignores abort entirely.
+          json: () => new Promise(() => {}),
+          text: async () => '',
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+
+      const transport = createDiscordDmTransport({ botToken: TOKEN, userId: USER_ID, fetchImpl: impl, timeoutMs: 5 });
+      const pending = transport.deliver!({ severity: 'info', title: 't' }).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(40);
+      const err = await pending;
+      expect(err).toMatchObject({ code: 'TIMEOUT' });
     });
   });
 

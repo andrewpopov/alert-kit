@@ -6,6 +6,7 @@ import {
   type AttemptedRouteOutcome,
   type Severity,
 } from './types';
+import { redactBotToken } from './discord-dm';
 
 /** A child transport, optionally given a stable label for logs/receipts. */
 export interface FallbackTransportEntry {
@@ -45,10 +46,14 @@ export interface FallbackTransportOptions {
    * case where every configured child ultimately failed. Receives only
    * sanitized, non-secret data (see `DegradedInfo`).
    *
-   * Contained the same way `onSent`/`onSkipped` are in `discord.ts`: a
-   * throwing or slow observer is caught and logged (via `console.error`),
-   * never allowed to fail an alert that actually succeeded, trigger another
-   * delivery attempt, or delay the caller past the delivery itself.
+   * What IS guaranteed: a throw — whether synchronous, or an `async`
+   * observer's rejection — is contained (caught, logged as a fixed
+   * diagnostic that never includes the exception's own text), never
+   * triggers a second delivery attempt, and never masks a delivery that
+   * actually succeeded. What is NOT guaranteed: a *synchronous* observer
+   * that blocks (e.g. a tight loop, a synchronous I/O call) still blocks
+   * delivery completion — there is nothing that can contain that — so
+   * observers must not do blocking work.
    */
   onDegraded?: (info: DegradedInfo) => void;
 }
@@ -123,11 +128,36 @@ export function createFallbackTransport(
 
   const isConfigured = (severity?: Severity): boolean => children.some(({ transport }) => transport.isConfigured(severity));
 
+  /**
+   * Log a FIXED diagnostic for an `onDegraded` observer that threw or
+   * rejected. Deliberately never includes the exception's own message or
+   * stringification: the observer is caller-supplied and untrusted, and its
+   * error text could embed whatever secret (e.g. a bot token) the delivery
+   * this observer is reporting on was trying to keep out of logs. The only
+   * per-error detail included is the constructor name, and even that is run
+   * through `redactBotToken` as a last line of defense.
+   */
+  const logObserverFailure = (err: unknown): void => {
+    const ctorName = err instanceof Error ? err.constructor.name : typeof err;
+    console.error(redactBotToken(`alert-kit: onDegraded observer threw; suppressed (${ctorName})`));
+  };
+
   const notifyDegraded = (info: DegradedInfo): void => {
+    let result: unknown;
     try {
-      options.onDegraded?.(info);
+      result = options.onDegraded?.(info);
     } catch (err) {
-      console.error(`alert-kit: onDegraded callback threw: ${err instanceof Error ? err.message : String(err)}`);
+      logObserverFailure(err);
+      return;
+    }
+    // `onDegraded`'s `void` return type permits an `async` function; its
+    // rejection is NOT caught by the `try/catch` above (that only sees
+    // synchronous throws) and would otherwise be an unhandled rejection —
+    // which terminates the process on Node 24 by default. Attach a
+    // rejection handler without awaiting it, so a slow observer can't delay
+    // or block delivery completion.
+    if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+      (result as PromiseLike<unknown>).then(undefined, logObserverFailure);
     }
   };
 

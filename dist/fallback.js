@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AggregateAlertDeliveryError = void 0;
 exports.createFallbackTransport = createFallbackTransport;
 const types_1 = require("./types");
+const discord_dm_1 = require("./discord-dm");
 function normalize(children) {
     return children.map((child, index) => {
         const label = (index).toString();
@@ -64,12 +65,36 @@ exports.AggregateAlertDeliveryError = AggregateAlertDeliveryError;
 function createFallbackTransport(transports, options = {}) {
     const children = normalize(transports);
     const isConfigured = (severity) => children.some(({ transport }) => transport.isConfigured(severity));
+    /**
+     * Log a FIXED diagnostic for an `onDegraded` observer that threw or
+     * rejected. Deliberately never includes the exception's own message or
+     * stringification: the observer is caller-supplied and untrusted, and its
+     * error text could embed whatever secret (e.g. a bot token) the delivery
+     * this observer is reporting on was trying to keep out of logs. The only
+     * per-error detail included is the constructor name, and even that is run
+     * through `redactBotToken` as a last line of defense.
+     */
+    const logObserverFailure = (err) => {
+        const ctorName = err instanceof Error ? err.constructor.name : typeof err;
+        console.error((0, discord_dm_1.redactBotToken)(`alert-kit: onDegraded observer threw; suppressed (${ctorName})`));
+    };
     const notifyDegraded = (info) => {
+        let result;
         try {
-            options.onDegraded?.(info);
+            result = options.onDegraded?.(info);
         }
         catch (err) {
-            console.error(`alert-kit: onDegraded callback threw: ${err instanceof Error ? err.message : String(err)}`);
+            logObserverFailure(err);
+            return;
+        }
+        // `onDegraded`'s `void` return type permits an `async` function; its
+        // rejection is NOT caught by the `try/catch` above (that only sees
+        // synchronous throws) and would otherwise be an unhandled rejection —
+        // which terminates the process on Node 24 by default. Attach a
+        // rejection handler without awaiting it, so a slow observer can't delay
+        // or block delivery completion.
+        if (result && typeof result.then === 'function') {
+            result.then(undefined, logObserverFailure);
         }
     };
     const deliver = async (alert) => {

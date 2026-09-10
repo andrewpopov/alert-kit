@@ -34,10 +34,14 @@ export interface FallbackTransportOptions {
      * case where every configured child ultimately failed. Receives only
      * sanitized, non-secret data (see `DegradedInfo`).
      *
-     * Contained the same way `onSent`/`onSkipped` are in `discord.ts`: a
-     * throwing or slow observer is caught and logged (via `console.error`),
-     * never allowed to fail an alert that actually succeeded, trigger another
-     * delivery attempt, or delay the caller past the delivery itself.
+     * What IS guaranteed: a throw — whether synchronous, or an `async`
+     * observer's rejection — is contained (caught, logged as a fixed
+     * diagnostic that never includes the exception's own text), never
+     * triggers a second delivery attempt, and never masks a delivery that
+     * actually succeeded. What is NOT guaranteed: a *synchronous* observer
+     * that blocks (e.g. a tight loop, a synchronous I/O call) still blocks
+     * delivery completion — there is nothing that can contain that — so
+     * observers must not do blocking work.
      */
     onDegraded?: (info: DegradedInfo) => void;
 }

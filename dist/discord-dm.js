@@ -91,11 +91,27 @@ function parseRetryAfterSec(json, header) {
  * throws is a fixed, fixed-shape `AlertDeliveryError` built from an
  * allowlist (operation name, HTTP status, Discord code) — never from the
  * caught error's own message or `cause`.
+ *
+ * The abort signal is only a request to the fetch implementation; nothing
+ * forces it to honor `signal` (an injected `fetchImpl`, or its body reader,
+ * may ignore it entirely). So the fetch + body-read is raced against an
+ * independent `setTimeout` that rejects with the same `TIMEOUT`
+ * classification on its own — this bounds OUR wait regardless of whether the
+ * implementation cooperates. We still call `controller.abort()` too, since
+ * that is still the right thing for a well-behaved implementation; an
+ * implementation that ignores it may simply leave its underlying request
+ * running in the background, which we have no way to stop, only to stop
+ * waiting on.
  */
 async function post(fetchImpl, url, token, payload, timeoutMs, op) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
+    const timeoutError = new types_1.AlertDeliveryError('TIMEOUT', true, undefined, undefined, `Discord DM ${op} timed out after ${timeoutMs}ms`);
+    let deadlineTimer;
+    const deadline = new Promise((_, reject) => {
+        deadlineTimer = setTimeout(() => reject(timeoutError), timeoutMs);
+    });
+    const attempt = (async () => {
         const res = await fetchImpl(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bot ${token}` },
@@ -119,10 +135,15 @@ async function post(fetchImpl, url, token, payload, timeoutMs, op) {
             return { kind: 'error', status: res.status, discordCode };
         }
         return { kind: 'ok', json };
+    })();
+    try {
+        return await Promise.race([attempt, deadline]);
     }
     catch (err) {
+        if (err === timeoutError)
+            throw timeoutError;
         if (controller.signal.aborted || (0, discord_internal_1.isAbortError)(err)) {
-            throw new types_1.AlertDeliveryError('TIMEOUT', true, undefined, undefined, `Discord DM ${op} timed out after ${timeoutMs}ms`);
+            throw timeoutError;
         }
         // NEVER include the caught error's own message/cause — see the doc
         // comment above. redactBotToken is applied anyway as a last line of
@@ -131,6 +152,7 @@ async function post(fetchImpl, url, token, payload, timeoutMs, op) {
     }
     finally {
         clearTimeout(timer);
+        clearTimeout(deadlineTimer);
     }
 }
 function classifyApiError(op, status, discordCode, destinationId) {
@@ -143,11 +165,24 @@ function classifyApiError(op, status, discordCode, destinationId) {
     const codeSuffix = discordCode !== undefined ? `, code ${discordCode}` : '';
     return new types_1.AlertDeliveryError('DESTINATION_REJECTED', false, destinationId, undefined, `Discord DM ${op} rejected (status ${status}${codeSuffix})`);
 }
-/** Validate the DM channel-open response's `id` as a plain, non-empty string — never trust it blindly. */
+// A Discord snowflake is a decimal integer, up to 20 digits (a `uint64` at
+// most encodes 20 decimal digits). Anything else out of a channel-open
+// response is a provider anomaly, not a real channel id — and, because this
+// value is interpolated straight into the next request's URL and surfaced on
+// the receipt/`onDegraded` payload, an unvalidated value could carry
+// something sensitive that a malformed or compromised response echoed back.
+const SNOWFLAKE_RE = /^\d{1,20}$/;
+/**
+ * Validate the DM channel-open response's `id` as a decimal Discord
+ * snowflake before using it — never trust it blindly. A response shaped like
+ * `{id: "<something sensitive>"}` must never reach the message-POST URL or
+ * be exposed via the receipt/`onDegraded`, so the rejected value itself is
+ * never included in the thrown error.
+ */
 function extractChannelId(json) {
     const id = json && typeof json === 'object' ? json.id : undefined;
-    if (typeof id !== 'string' || id.length === 0) {
-        throw new types_1.AlertDeliveryError('SERVER_ERROR', true, undefined, undefined, 'Discord DM open_dm returned an unexpected response (missing channel id)');
+    if (typeof id !== 'string' || !SNOWFLAKE_RE.test(id)) {
+        throw new types_1.AlertDeliveryError('SERVER_ERROR', true, undefined, undefined, 'Discord DM open_dm returned an unexpected response (invalid channel id)');
     }
     return id;
 }
