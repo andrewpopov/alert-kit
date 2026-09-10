@@ -3,149 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.redactWebhookUrl = redactWebhookUrl;
 exports.createDiscordTransport = createDiscordTransport;
 const types_1 = require("./types");
+const discord_internal_1 = require("./discord-internal");
 const DEFAULT_TIMEOUT_MS = 10000;
 const MAX_RETRY_AFTER_SEC = 60;
-// Discord's documented embed limits. We enforce them by TRUNCATING rather than
-// dropping the alert or letting the request through — a 400 from Discord means
-// the alert is lost entirely, which is worse than a shortened message.
-const LIMITS = {
-    title: 256,
-    description: 4096,
-    fieldName: 256,
-    fieldValue: 1024,
-    footerText: 2048,
-    maxFields: 25,
-};
-// Discord's separate, AGGREGATE limit: total text across title + description
-// + footer + every field name/value must be <= 6000 code points, even though
-// each component individually fits its own per-component limit above (25
-// max-length fields alone sum to ~32,000). Exceeding it gets the whole POST
-// rejected with a 400 — losing the alert, the exact failure per-component
-// truncation exists to prevent.
-const MAX_EMBED_TOTAL = 6000;
-const DEFAULT_COLORS = {
-    info: 0x3498db,
-    warn: 0xf1c40f,
-    error: 0xe74c3c,
-    critical: 0x992d22,
-};
-// Placeholder for a title/field name/field value that would otherwise be
-// empty. Discord rejects an empty title, field name, or field value with a
-// 400 — which loses the alert entirely, the same failure truncation above
-// exists to prevent.
-const EMPTY = '—';
-function orPlaceholder(value) {
-    return value.trim() === '' ? EMPTY : value;
-}
-function truncate(value, max) {
-    if (value.length <= max)
-        return value; // length is an upper bound on code-point count
-    const codePoints = [...value];
-    if (codePoints.length <= max)
-        return value;
-    if (max <= 0)
-        return '';
-    if (max === 1)
-        return codePoints[0];
-    return `${codePoints.slice(0, max - 1).join('')}…`;
-}
-function codePointLength(value) {
-    return [...value].length;
-}
-function buildFields(fields) {
-    if (!fields)
-        return undefined;
-    const entries = Object.entries(fields).slice(0, LIMITS.maxFields);
-    if (entries.length === 0)
-        return undefined;
-    return entries.map(([name, value]) => ({
-        name: truncate(orPlaceholder(name), LIMITS.fieldName),
-        value: truncate(orPlaceholder(String(value)), LIMITS.fieldValue),
-        inline: true,
-    }));
-}
-function buildEmbed(alert, colors) {
-    const fields = buildFields(alert.fields);
-    const embed = {
-        title: truncate(orPlaceholder(alert.title), LIMITS.title),
-        ...(alert.message ? { description: truncate(alert.message, LIMITS.description) } : {}),
-        color: colors[alert.severity],
-        timestamp: (alert.timestamp ?? new Date()).toISOString(),
-        ...(alert.service ? { footer: { text: truncate(alert.service, LIMITS.footerText) } } : {}),
-        ...(fields ? { fields } : {}),
-    };
-    return fitEmbedToBudget(embed);
-}
-function embedTextTotal(embed) {
-    let total = codePointLength(embed.title);
-    if (embed.description)
-        total += codePointLength(embed.description);
-    if (embed.footer)
-        total += codePointLength(embed.footer.text);
-    if (embed.fields) {
-        for (const field of embed.fields)
-            total += codePointLength(field.name) + codePointLength(field.value);
-    }
-    return total;
-}
-/**
- * Enforce Discord's 6,000-code-point AGGREGATE embed limit (see
- * MAX_EMBED_TOTAL above) on top of the per-component caps already applied by
- * `buildEmbed`. Priority, most important first: title (already <=256, always
- * kept as-is) > footer/service (always kept as-is) > description (trimmed to
- * fit) > fields (dropped from the end, as a last resort, once the
- * description alone can't bring the total under budget).
- */
-function fitEmbedToBudget(embed) {
-    let total = embedTextTotal(embed);
-    if (total <= MAX_EMBED_TOTAL)
-        return embed;
-    const result = { ...embed, fields: embed.fields ? [...embed.fields] : undefined };
-    if (result.description && total > MAX_EMBED_TOTAL) {
-        const overBy = total - MAX_EMBED_TOTAL;
-        const descLen = codePointLength(result.description);
-        const truncated = truncateToCodePoints(result.description, Math.max(0, descLen - overBy));
-        total -= descLen - codePointLength(truncated);
-        if (truncated) {
-            result.description = truncated;
-        }
-        else {
-            delete result.description;
-        }
-    }
-    while (total > MAX_EMBED_TOTAL && result.fields && result.fields.length > 0) {
-        const dropped = result.fields.pop();
-        total -= codePointLength(dropped.name) + codePointLength(dropped.value);
-    }
-    if (result.fields && result.fields.length === 0)
-        delete result.fields;
-    if (total > MAX_EMBED_TOTAL && result.fields && result.fields.length > 0) {
-        const last = result.fields[result.fields.length - 1];
-        const overBy = total - MAX_EMBED_TOTAL;
-        const valLen = codePointLength(last.value);
-        const truncatedVal = truncateToCodePoints(last.value, Math.max(0, valLen - overBy));
-        total -= valLen - codePointLength(truncatedVal);
-        last.value = truncatedVal;
-    }
-    return result;
-}
-/** Truncate to an exact code-point length, no ellipsis (used for budget trimming, not display truncation). */
-function truncateToCodePoints(value, max) {
-    if (max <= 0)
-        return '';
-    const codePoints = [...value];
-    if (codePoints.length <= max)
-        return value;
-    return codePoints.slice(0, max).join('');
-}
-function sanitizeColor(color, fallback) {
-    if (color === undefined)
-        return fallback;
-    return Number.isInteger(color) && color >= 0x000000 && color <= 0xffffff ? color : fallback;
-}
-function delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
 /** Parse the non-secret webhook id out of a Discord webhook URL's `.../webhooks/{id}/{token}` shape. */
 function parseWebhookId(url) {
     const match = url.match(/\/webhooks\/([^/]+)\/([^/?#]+)/);
@@ -187,14 +47,13 @@ function resolveConfig(options) {
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         totalTimeoutMs: options.totalTimeoutMs,
         colors: {
-            info: sanitizeColor(options.colors?.info, DEFAULT_COLORS.info),
-            warn: sanitizeColor(options.colors?.warn, DEFAULT_COLORS.warn),
-            error: sanitizeColor(options.colors?.error, DEFAULT_COLORS.error),
-            critical: sanitizeColor(options.colors?.critical, DEFAULT_COLORS.critical),
+            info: (0, discord_internal_1.sanitizeColor)(options.colors?.info, discord_internal_1.DEFAULT_COLORS.info),
+            warn: (0, discord_internal_1.sanitizeColor)(options.colors?.warn, discord_internal_1.DEFAULT_COLORS.warn),
+            error: (0, discord_internal_1.sanitizeColor)(options.colors?.error, discord_internal_1.DEFAULT_COLORS.error),
+            critical: (0, discord_internal_1.sanitizeColor)(options.colors?.critical, discord_internal_1.DEFAULT_COLORS.critical),
         },
     };
 }
-/** True for a native `AbortError` (fetch/body-read rejection from an aborted `AbortSignal`). */
 /** `err.message` if it is an Error, else a safe stringification. Never throws. */
 function describeError(err) {
     if (err instanceof Error)
@@ -228,9 +87,6 @@ function redactWebhookUrl(text, url) {
     out = out.replace(/\bdiscord(?:app)?\.com\/api\/webhooks\/\S+/gi, '<redacted-webhook-url>');
     return out;
 }
-function isAbortError(err) {
-    return err instanceof Error && err.name === 'AbortError';
-}
 async function readRetryAfterSec(res, signal) {
     let raw = NaN;
     const header = res.headers.get('retry-after');
@@ -248,7 +104,7 @@ async function readRetryAfterSec(res, signal) {
             // be swallowed into "no retry_after found" — that would fall back to
             // the 1s default and let `send()` fire a second POST instead of
             // failing with the timeout.
-            if (signal.aborted || isAbortError(err))
+            if (signal.aborted || (0, discord_internal_1.isAbortError)(err))
                 throw err;
             // body wasn't JSON with retry_after — fall through to the default below.
         }
@@ -284,7 +140,7 @@ async function attempt(url, body, fetchImpl, timeoutMs) {
                 // be mislabeled as an HTTP failure with an empty/blank snippet — the
                 // real cause (a timeout) would otherwise be lost behind a
                 // `status ${res.status}` message.
-                if (controller.signal.aborted || isAbortError(err))
+                if (controller.signal.aborted || (0, discord_internal_1.isAbortError)(err))
                     throw err;
                 snippet = '';
             }
@@ -297,7 +153,7 @@ async function attempt(url, body, fetchImpl, timeoutMs) {
         // read, and the non-2xx body read) to the same clear timeout error,
         // rather than letting whatever AbortError shape happened to surface leak
         // out (or, worse, get relabeled as an HTTP status above).
-        if (controller.signal.aborted || isAbortError(err)) {
+        if (controller.signal.aborted || (0, discord_internal_1.isAbortError)(err)) {
             throw new Error(`Discord webhook POST timed out after ${timeoutMs}ms`);
         }
         // NEVER rethrow a raw fetch error. The webhook URL is a bearer credential,
@@ -342,7 +198,7 @@ function createDiscordTransport(options = {}) {
                 options.onSkipped?.({ severity: alert.severity, title: alert.title });
             }
             catch (err) {
-                console.error(`alert-kit: onSkipped callback threw: ${describeError(err)}`);
+                console.error(`alert-kit: onSkipped callback threw: ${redactWebhookUrl(describeError(err))}`);
             }
             throw new types_1.AlertDeliveryError('UNCONFIGURED', false, undefined, undefined, `No Discord webhook route configured for severity "${alert.severity}"`);
         }
@@ -355,7 +211,7 @@ function createDiscordTransport(options = {}) {
         const fetchImpl = options.fetchImpl ?? globalThis.fetch;
         const body = {
             ...(config.username ? { username: config.username } : {}),
-            embeds: [buildEmbed({ ...alert, service: alert.service ?? config.service }, config.colors)],
+            embeds: [(0, discord_internal_1.buildEmbed)({ ...alert, service: alert.service ?? config.service }, config.colors)],
         };
         const startedAt = Date.now();
         const remainingMs = () => {
@@ -384,7 +240,7 @@ function createDiscordTransport(options = {}) {
             if (config.totalTimeoutMs !== undefined && delayMs >= remainingMs()) {
                 throw new types_1.AlertDeliveryError('RATE_LIMITED', true, destinationId, delayMs, `Discord webhook total deadline exceeded after ${config.totalTimeoutMs}ms`);
             }
-            await delay(delayMs);
+            await (0, discord_internal_1.delay)(delayMs);
             // Revalidate immediately before the retry POST too — same guard rail,
             // every attempt, not just the first. A redirect or a mutated route
             // between attempts is exactly what this hook exists to catch, and a
