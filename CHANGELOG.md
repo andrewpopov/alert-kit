@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.7.0
+
+- Add a Discord bot-DM transport that alerts directly via the Discord REST API
+  `createDiscordDmTransport` sends alerts as a direct message from your
+  Discord bot, using the Discord REST API directly (`POST
+  /users/@me/channels` then `POST /channels/{id}/messages`) rather than an
+  incoming webhook. It exists for callers whose primary alert condition is
+  "my own API process may be down" — an alert path that must not route
+  through that same process. Configure it with `DISCORD_BOT_TOKEN` and
+  `DISCORD_ALERT_DM_USER_ID` (or the equivalent options), and it shares the
+  existing embed formatting, truncation, and severity colors with the
+  webhook transport. Rate limits and provider errors are classified into
+  `AlertDeliveryError` codes so callers can retry or fall back
+  appropriately, and the bot token is never included in a thrown error,
+  receipt, or log line.
+- Add createFallbackTransport, composing transports (e.g. DM primary + webhook fallback) so an alert isn't silently dropped
+  `createFallbackTransport(transports, options?)` composes any number of
+  `AlertTransport`s into one: it skips a child unconfigured for the alert's
+  severity, tries the rest in order, and stops at the first that delivers —
+  so, for example, a Discord bot DM (which has strictly more failure modes
+  than a webhook: bot not in a mutual guild, DMs closed, token rotation,
+  rate limits) can fall back to a webhook instead of dropping the alert.
+  `isConfigured(severity?)` is true if ANY child is configured. If every
+  configured child fails, it throws `AggregateAlertDeliveryError` with the
+  sanitized outcome of every child tried — never just the last one — so a
+  terminal failure from one route can't hide a retryable failure from
+  another; `retryable` is true if any attempted route could succeed on a
+  retry. The winning delivery's receipt gains two new, additive
+  `AlertDeliveryReceipt` fields: `route` (the winning child's label or
+  index) and `attemptedRoutes` (sanitized outcomes for every child skipped
+  or failed before it). An optional `onDegraded` callback is invoked
+  whenever delivery didn't succeed via the first configured route,
+  including on total failure; like the existing `onSent`/`onSkipped`
+  callbacks, a throwing or slow observer is contained and can never fail an
+  alert that actually succeeded.
+
 ## 0.6.2
 
 - the aggregate verification gate now rejects stale committed build output
