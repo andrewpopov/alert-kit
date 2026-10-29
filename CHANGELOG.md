@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- Installing from git no longer runs a full dependency install: the `prepare` script is gone (run `npm run hooks` once after cloning) and `build` is now `compile`
+  The pinned git install no longer triggers a nested devDependency install; `dist/` is committed so nothing is built at install time.
+- Update shared release notes tooling
+  Refresh the shared release notes package pins and lockfiles. Full release verification and production rollout remain with the next release candidate.
+
 ## 0.7.0
 
 - Add a Discord bot-DM transport that alerts directly via the Discord REST API
